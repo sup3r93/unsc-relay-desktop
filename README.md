@@ -25,6 +25,8 @@ Personal audio tracks and videos are excluded from this public repository. [Medi
 
 Halo, UNSC and related trademarks belong to their respective owners. This independent, unofficial project is not affiliated with or endorsed by Microsoft or Halo Studios.
 
+Dependency maintenance: Dependabot checks GitHub Actions, npm and NuGet weekly and opens grouped PRs against `dev`, with at most one open PR per ecosystem. Vulnerability alerts are enabled; automatic security PRs to the default `main` branch remain disabled to preserve the dev-only contribution path. Required verification remains enabled on PRs and pushes to main/dev; concurrent superseded runs are cancelled. CodeQL analyzes the public repository using standard runners. No automatic merge or paid security subscription is enabled.
+
 ## Italiano
 
 **Le pull request della community devono essere dirette a `dev`. Solo il titolare può proporre modifiche a `main`.** [Guida ai contributi](CONTRIBUTING.md) · [Segnala un bug o proponi una funzionalità](https://github.com/sup3r93/unsc-relay-desktop/issues/new/choose)
@@ -47,3 +49,5 @@ Gli installer sono file EXE firmati. Il percorso è scelto al primo setup e mant
 Le tracce audio e i filmati personali non sono inclusi nel repository pubblico. [Risorse multimediali](apps/desktop/src/UnscRelay.App/Web/media/README.md). Non sono pubblicati chiavi personali, token, dati utente o configurazioni di produzione. Non è ancora stata scelta una licenza open source per il codice del progetto; le dipendenze conservano le proprie licenze.
 
 Halo, UNSC e i relativi marchi appartengono ai rispettivi titolari. Progetto indipendente, non ufficiale, non affiliato né approvato da Microsoft o Halo Studios.
+
+Manutenzione dipendenze: Dependabot controlla GitHub Actions, npm e NuGet ogni settimana e apre PR raggruppate verso `dev`, al massimo una aperta per ecosistema. Gli avvisi di vulnerabilità sono attivi; le PR automatiche di sicurezza verso il ramo predefinito `main` restano disattivate per mantenere il percorso dei contributi su dev. Le verifiche obbligatorie restano attive sulle PR e sugli invii a main/dev; le esecuzioni superate vengono annullate. CodeQL analizza il repository pubblico su runner standard. Nessuna unione automatica o sottoscrizione di sicurezza a pagamento attiva.
