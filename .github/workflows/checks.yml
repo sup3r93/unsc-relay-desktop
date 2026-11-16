@@ -61,6 +61,7 @@ jobs:
         if: failure()
         with:
           name: desktop-ui-failures
+          retention-days: 3
           path: apps/desktop/test-results
   audit:
     name: Dependency audit
