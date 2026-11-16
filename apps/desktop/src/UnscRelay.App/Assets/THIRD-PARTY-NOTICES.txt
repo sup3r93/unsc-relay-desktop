@@ -1,0 +1,25 @@
+UNSC Relay includes components from these projects:
+
+xterm.js, addon-fit, addon-search: MIT. Full notices in Licenses/xterm*.txt.
+SSH.NET 2026.0.0: MIT; https://github.com/sshnet/SSH.NET
+Konscious.Security.Cryptography.Argon2 1.3.1 and Blake2: MIT;
+https://github.com/kmaragon/Konscious.Security.Cryptography
+BouncyCastle.Cryptography 2.7.0: license in Licenses/BouncyCastle.txt.
+Microsoft WebView2 SDK: https://www.nuget.org/packages/Microsoft.Web.WebView2
+Microsoft .NET runtime: https://github.com/dotnet/runtime/blob/main/LICENSE.TXT
+Microsoft Windows Desktop runtime: https://github.com/dotnet/wpf/blob/main/LICENSE.TXT
+
+Halo / UNSC names, visual references and supplied media belong to their respective owners.
+This is an unofficial personal project, not affiliated with Microsoft or Halo Studios.
+The supplied Halo audio/video assets are intended for the owner's private personal build.
+Do not redistribute those assets without the relevant rights.
+
+SshNet.Agent and SshNet.Keygen 2026.0.0: MIT; full notices in Licenses/SshNet.*.txt.
+Lemutec.RemoteViewing / Windows.Forms 1.2.1: source BSD-2-Clause notices preserved in Licenses/RemoteViewing.txt; NuGet package metadata also declares MIT. Source: https://github.com/lemutec/RemoteViewing, commit ba1c44e4eca1b2dfceb7792cc0668a34ee8ef468.
+jsdiff 9.0.0: BSD-3-Clause; full notice in Licenses/jsdiff.txt. Source: https://github.com/kpdecker/jsdiff. Used locally for text comparisons; no content is sent to external services.
+
+PuTTYgen 0.85, Simon Tatham et al., MIT. Official Windows x64 binary unchanged. Licence and provenance: Tools/PuTTYgen/LICENCE.txt and PROVENANCE.txt.
+
+Duende.IdentityModel.OidcClient 7.1.1 and Duende.IdentityModel: Apache-2.0.
+Sources and license: https://github.com/DuendeSoftware/foss/tree/main/identity-model-oidc-client
+Included Apache license: Licenses/Duende.txt. Used for system-browser OIDC Code + PKCE.

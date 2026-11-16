@@ -1,0 +1,11 @@
+using UnscRelay.Core;
+using System.IO;
+using System.Text.Json;
+using Microsoft.Win32;
+namespace UnscRelay.App;
+public partial class MainWindow
+{
+ void OnWindowsSessionSwitch(object sender,SessionSwitchEventArgs e){if(e.Reason is not(SessionSwitchReason.SessionLock or SessionSwitchReason.SessionLogoff or SessionSwitchReason.ConsoleDisconnect or SessionSwitchReason.RemoteDisconnect))return;Dispatcher.BeginInvoke(()=>{if(closing||!vault.Exists)return;authenticationGeneration++;StopAllRecordings();StopBundledAgent();vault.Lock();windowsSessionLocked=true;appAuthenticated=false;DesktopLayer.Visibility=System.Windows.Visibility.Collapsed;foreach(var floating in detachedWindows.Values)floating.Hide();Emit("windowsSessionLocked",new{locked=true});});}
+ object DiagnosticReport()=>new{format="unsc-relay-diagnostics-v1",createdUtc=DateTime.UtcNow,version=CurrentVersion.ToString(),os=new{version=Environment.OSVersion.Version.ToString(),architecture=System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString()},application=new{profiles=data.Profiles.Count,sessions=sessions.Count,transfers=fileJobs.Values.GroupBy(j=>j.Status).ToDictionary(g=>g.Key,g=>g.Count()),vaultExists=vault.Exists,vaultUnlocked=vault.IsUnlocked},privacy="No account identifiers, hostnames, IP addresses, file paths, terminal contents, passwords, keys or tokens are included."};
+ object ExportDiagnostic(){if(!Confirm("Esportare il rapporto diagnostico mostrato nell’anteprima? Il file non viene inviato automaticamente."))throw new OperationCanceledException();var path=SaveFile("Salva diagnostica senza dati personali","UNSC-Relay-diagnostica.json");if(path==null)throw new OperationCanceledException();var full=Path.GetFullPath(path);if(full.StartsWith(Path.GetFullPath(dataPath).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||full.StartsWith(Path.GetFullPath(AppContext.BaseDirectory),StringComparison.OrdinalIgnoreCase))throw new IOException("Salva la diagnostica fuori dalle cartelle dati e installazione dell’app.");var bytes=JsonSerializer.SerializeToUtf8Bytes(DiagnosticReport(),new JsonSerializerOptions{WriteIndented=true});AtomicFile.Write(path,bytes);return new{saved=true};}
+}

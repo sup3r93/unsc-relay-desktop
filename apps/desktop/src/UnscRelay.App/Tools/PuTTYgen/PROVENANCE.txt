@@ -1,0 +1,8 @@
+PuTTYgen 0.85 Windows x64, official unmodified binary.
+https://the.earth.li/~sgtatham/putty/0.85/w64/puttygen.exe
+SHA256 caa8870591712c44dcc76a639ae6723c62167eab6c4f1cb436b3a05d61741302
+Digest list: https://the.earth.li/~sgtatham/putty/0.85/sha256sums
+Authenticode verified Valid, publisher CN=Simon Tatham, O=Simon Tatham, S=Cambridgeshire, C=GB.
+MIT license in LICENCE.txt, original source distribution licence.
+Windows conversion GUI: https://the.earth.li/~sgtatham/putty/0.85/htmldoc/Chapter8.html#puttygen-conversions
+No private keys or passphrases are bundled. No custom cryptographic conversion is implemented.

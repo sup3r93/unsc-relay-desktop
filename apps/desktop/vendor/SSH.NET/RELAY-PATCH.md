@@ -1,0 +1,5 @@
+# SSH.NET 2026.0.0 - Relay extension
+
+Source: https://github.com/sshnet/SSH.NET/tree/2026.0.0, MIT license in LICENSE. Archive SHA256 in UPSTREAM.json. Original source is retained except SftpClient.cs and SubsystemSession.cs. These two files add an optional pre-connection SubsystemCommand property and use the existing channel SendExecRequest instead of SendSubsystemRequest when it is set. Every SFTP packet, transfer, host authentication and cryptographic primitive still uses upstream code. No reflection, binary patching or custom protocol parser.
+
+Relay.SshNet.csproj targets only net10, sets PackageId SSH.NET to replace the transitive official runtime consistently, and uses upstream BouncyCastle 2.7.0 / logging 8.0.3 dependencies. AssemblyVersion 2026.0.0.1 and the upstream public repository strong-name key preserve compatibility with Agent/Keygen; a strong name is not a publisher Authenticode signature. RelayVersion.cs identifies the modified build in its SSH identification banner. Keep this patch explicit when updating upstream. No upstream build scripts are executed.
