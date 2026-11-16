@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const file=fs.readFileSync('.github/workflows/community.yml','utf8');
+const file=fs.readFileSync('.github/workflows/community.yml','utf8').replace(/\r\n/g,'\n');
 assert(!file.includes('actions/checkout'));
 assert(!file.includes('${{'));
 const script=file.split('          script: |\n')[1].split('\n').map(line=>line.replace(/^            /,'')).join('\n');
