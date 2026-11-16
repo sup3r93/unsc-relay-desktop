@@ -19,6 +19,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: python .github/scripts/check-readmes.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node .github/scripts/test-community-policy.cjs
   desktop:
     name: Desktop checks
     runs-on: windows-latest

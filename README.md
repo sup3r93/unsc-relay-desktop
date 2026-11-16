@@ -4,6 +4,8 @@
 
 ## English
 
+**Community pull requests must target `dev`. Only the owner may propose changes to `main`.** [Contributing guide](CONTRIBUTING.md) · [Report a bug or suggest a feature](https://github.com/sup3r93/unsc-relay-desktop/issues/new/choose)
+
 **The UNSC Relay source code and application were created by artificial intelligence (AI), based on the project owner’s requests and directions.**
 
 Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Source baseline: **0.2.16**; this repository reorganization does not publish a new installer.
@@ -24,6 +26,8 @@ Personal audio tracks and videos are excluded from this public repository. [Medi
 Halo, UNSC and related trademarks belong to their respective owners. This independent, unofficial project is not affiliated with or endorsed by Microsoft or Halo Studios.
 
 ## Italiano
+
+**Le pull request della community devono essere dirette a `dev`. Solo il titolare può proporre modifiche a `main`.** [Guida ai contributi](CONTRIBUTING.md) · [Segnala un bug o proponi una funzionalità](https://github.com/sup3r93/unsc-relay-desktop/issues/new/choose)
 
 **Il codice e l’applicazione UNSC Relay sono stati realizzati da intelligenza artificiale (IA), sulla base delle richieste e delle indicazioni del titolare del progetto.**
 
