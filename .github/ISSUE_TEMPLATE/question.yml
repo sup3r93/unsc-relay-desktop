@@ -1,0 +1,24 @@
+name: Question / Domanda
+description: Ask about desktop usage / Chiedi informazioni sull’uso del desktop
+title: "[Question]: "
+labels: [question, "status: needs triage"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: App version / Versione dell’app
+  - type: textarea
+    id: question
+    attributes:
+      label: Question and context / Domanda e contesto
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy and duplicate check / Privacy e duplicati
+      options:
+        - label: I searched existing issues / Ho cercato nelle issue esistenti
+          required: true
+        - label: I removed passwords, keys, tokens and personal data / Ho rimosso password, chiavi, token e dati personali
+          required: true
