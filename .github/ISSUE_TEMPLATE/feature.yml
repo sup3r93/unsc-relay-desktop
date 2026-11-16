@@ -1,0 +1,30 @@
+name: Feature request / Proponi una funzionalità
+description: Suggest an improvement / Suggerisci un miglioramento
+title: "[Feature]: "
+labels: [enhancement, "status: needs triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or need / Problema o necessità
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / Comportamento proposto
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and accessibility / Alternative e accessibilità
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy and duplicate check / Privacy e duplicati
+      options:
+        - label: I searched existing issues / Ho cercato nelle issue esistenti
+          required: true
+        - label: I removed passwords, keys, tokens and personal data / Ho rimosso password, chiavi, token e dati personali
+          required: true
