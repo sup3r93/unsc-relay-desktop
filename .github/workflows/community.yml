@@ -1,0 +1,27 @@
+name: Community PR policy
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize, ready_for_review]
+permissions:
+  pull-requests: write
+  issues: write
+jobs:
+  target:
+    name: Community PR target
+    runs-on: ubuntu-latest
+    steps:
+      # Metadata only: never check out, download or execute PR code here.
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const owner = context.payload.repository.owner;
+            const allowed = pr.base.ref === 'dev' || (pr.base.ref === 'main' && pr.user.id === owner.id);
+            if (!allowed) {
+              await github.rest.issues.createComment({...context.repo, issue_number: pr.number,
+                body: 'Community contributions must target **dev**. Please reopen this PR against `dev`. Only the repository owner may propose changes to `main`.\n\nI contributi della community devono essere diretti a **dev**. Riapri la PR verso `dev`: solo il titolare può proporre modifiche a `main`.'});
+              await github.rest.pulls.update({...context.repo, pull_number: pr.number, state: 'closed'});
+              core.setFailed('Community pull requests must target dev.');
+              return;
+            }
+            core.info(`Accepted target: ${pr.base.ref}`);
