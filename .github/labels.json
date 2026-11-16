@@ -1,0 +1,152 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Incorrect behavior / Comportamento errato"
+  },
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "New feature or improvement / Nuova funzione o miglioramento"
+  },
+  {
+    "name": "documentation",
+    "color": "0075ca",
+    "description": "Documentation and translations / Documentazione e traduzioni"
+  },
+  {
+    "name": "question",
+    "color": "d876e3",
+    "description": "Usage question / Domanda di utilizzo"
+  },
+  {
+    "name": "accessibility",
+    "color": "7057ff",
+    "description": "Keyboard, readability and assistive tools / Tastiera, leggibilità e accessibilità"
+  },
+  {
+    "name": "duplicate",
+    "color": "cfd3d7",
+    "description": "Already tracked / Già segnalato"
+  },
+  {
+    "name": "invalid",
+    "color": "e4e669",
+    "description": "Insufficient or unrelated report / Segnalazione non pertinente"
+  },
+  {
+    "name": "wontfix",
+    "color": "ffffff",
+    "description": "Not planned / Non previsto"
+  },
+  {
+    "name": "good first issue",
+    "color": "7057ff",
+    "description": "Scoped task for first contributions / Attività per iniziare"
+  },
+  {
+    "name": "help wanted",
+    "color": "008672",
+    "description": "Contributions welcome / Contributi benvenuti"
+  },
+  {
+    "name": "status: needs triage",
+    "color": "ededed",
+    "description": "Awaiting maintainer review / In attesa di valutazione"
+  },
+  {
+    "name": "status: needs info",
+    "color": "fbca04",
+    "description": "More details needed / Servono altre informazioni"
+  },
+  {
+    "name": "status: confirmed",
+    "color": "0e8a16",
+    "description": "Reproduced or accepted / Riprodotto o accettato"
+  },
+  {
+    "name": "status: in progress",
+    "color": "1d76db",
+    "description": "Work underway / Lavoro in corso"
+  },
+  {
+    "name": "status: blocked",
+    "color": "b60205",
+    "description": "Blocked by a dependency or decision / Bloccato"
+  },
+  {
+    "name": "status: needs review",
+    "color": "5319e7",
+    "description": "Ready for review / Pronto per la revisione"
+  },
+  {
+    "name": "priority: critical",
+    "color": "b60205",
+    "description": "Severe impact; maintainer assigned / Impatto critico, assegnata dal manutentore"
+  },
+  {
+    "name": "priority: high",
+    "color": "d93f0b",
+    "description": "High priority / Priorità alta"
+  },
+  {
+    "name": "priority: normal",
+    "color": "fbca04",
+    "description": "Normal priority / Priorità normale"
+  },
+  {
+    "name": "priority: low",
+    "color": "c2e0c6",
+    "description": "Low priority / Priorità bassa"
+  },
+  {
+    "name": "area: ssh",
+    "color": "466b52",
+    "description": "SSH, authentication, tunnels / SSH, autenticazione, tunnel"
+  },
+  {
+    "name": "area: sftp",
+    "color": "466b52",
+    "description": "Transfers and remote editing / Trasferimenti ed editor remoto"
+  },
+  {
+    "name": "area: remote-desktop",
+    "color": "466b52",
+    "description": "RDP and VNC / RDP e VNC"
+  },
+  {
+    "name": "area: terminal",
+    "color": "466b52",
+    "description": "Terminal rendering, CMD, PowerShell, WSL / Terminali"
+  },
+  {
+    "name": "area: vault",
+    "color": "466b52",
+    "description": "Encrypted vault, keys and synchronization / Archivio, chiavi e sincronizzazione"
+  },
+  {
+    "name": "area: installer-updates",
+    "color": "466b52",
+    "description": "Installation, signing and updates / Installazione, firma e aggiornamenti"
+  },
+  {
+    "name": "area: ui-ux",
+    "color": "466b52",
+    "description": "Layout, navigation and interaction / Grafica, navigazione e interazione"
+  },
+  {
+    "name": "area: audio",
+    "color": "466b52",
+    "description": "Intro, outro and music / Intro, outro e musica"
+  },
+  {
+    "name": "area: ci",
+    "color": "466b52",
+    "description": "Automated checks and repository tooling / Verifiche automatiche e strumenti"
+  },
+  {
+    "name": "dependencies",
+    "color": "0366d6",
+    "description": "Dependency changes / Aggiornamenti dipendenze"
+  }
+]
