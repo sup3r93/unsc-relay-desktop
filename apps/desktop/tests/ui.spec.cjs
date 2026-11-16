@@ -770,7 +770,7 @@ test('animated login stays within viewport with no scrolling and capitalized Com
  for(const viewport of [{width:3440,height:1440},{width:1920,height:1080},{width:1366,height:768},{width:800,height:600}]){
   await page.setViewportSize(viewport);await page.waitForTimeout(350);
   const metrics=await page.evaluate(()=>{const gate=document.querySelector('#access-gate');return {htmlX:document.documentElement.scrollWidth>innerWidth,htmlY:document.documentElement.scrollHeight>innerHeight,overflow:getComputedStyle(gate).overflow,buttons:[...gate.querySelectorAll('button,input')].filter(e=>e.checkVisibility()).map(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth})}});
-  expect(metrics.htmlX).toBe(false);expect(metrics.htmlY).toBe(false);expect(metrics.overflow).toBe('clip');expect(metrics.buttons.every(Boolean)).toBe(true);
+  expect(metrics.htmlX).toBe(false);expect(metrics.htmlY).toBe(false);expect(metrics.overflow).toBe('clip');expect(metrics.buttons.every(Boolean),JSON.stringify({viewport,...metrics})).toBe(true);
   await page.mouse.wheel(500,500);await page.evaluate(()=>window.scrollTo(1000,1000));expect(await page.evaluate(()=>[scrollX,scrollY])).toEqual([0,0]);
  }
  await page.setViewportSize({width:1920,height:1080});await page.screenshot({path:'artifacts/ui-029-login.png'});
