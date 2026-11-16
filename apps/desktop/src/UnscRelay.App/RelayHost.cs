@@ -91,7 +91,7 @@ public partial class MainWindow
     static string S(JsonElement p, string k, string fallback = "") => p.TryGetProperty(k, out var v) ? v.GetString() ?? fallback : fallback;
     static int I(JsonElement p, string k, int fallback) => p.TryGetProperty(k, out var v) && v.TryGetInt32(out var n) ? n : fallback;
     SshSession Session(JsonElement p) => sessions.TryGetValue(S(p, "sessionId"), out var s) ? s : throw new InvalidOperationException("Sessione non disponibile.");
-    object Snapshot() => new { account=CloudStatus(), data, vault = new { exists = vault.Exists, unlocked = vault.IsUnlocked, keys = vault.IsUnlocked ? vault.List() : [], passwords = vault.IsUnlocked ? vault.Passwords() : [], revocations = vault.IsUnlocked ? vault.Revocations() : [], windowsHello = vault.WindowsHello() != null }, hostKeys = hosts.List(), version = CurrentVersion.ToString(), dataPath, diagnostic = smokeTest&&!sequenceSmokeTest };
+    object Snapshot() => new { account=CloudStatus(), data, vault = new { exists = vault.Exists, unlocked = vault.IsUnlocked, keys = vault.IsUnlocked ? vault.List() : [], passwords = vault.IsUnlocked ? vault.Passwords() : [], revocations = vault.IsUnlocked ? vault.Revocations() : [], windowsHello = AccountHelloAllowed() }, hostKeys = hosts.List(), version = CurrentVersion.ToString(), dataPath, diagnostic = smokeTest&&!sequenceSmokeTest };
     async void OnRelayMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         if (!e.Source.StartsWith(Origin + "/", StringComparison.Ordinal)) return; string? id = null;
@@ -122,7 +122,7 @@ public partial class MainWindow
     async Task<object?> Execute(string action, JsonElement p)
     {
         if (updating && action != "bootstrap") throw new InvalidOperationException("Attendi la fine dell’aggiornamento.");
-        if((AppLocked||AccountLocked) && action is not("accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
+        if((AppLocked||AccountLocked) && action is not("accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
         switch (action)
         {
             case "diagnosticPreview": return DiagnosticReport();
@@ -195,16 +195,15 @@ public partial class MainWindow
                 data.Settings = SequencePolicy.Apply(settings with { AutoLockMinutes = Math.Clamp(I(p, "autoLockMinutes", 10), 1, 120), StartupVolume=data.Settings.StartupVolume, ShutdownVolume=data.Settings.ShutdownVolume, RecordingRetentionDays = data.Settings.RecordingRetentionDays, RequireAppAuthentication=data.Settings.RequireAppAuthentication, AssistantApiEnabled=data.Settings.AssistantApiEnabled, AppMusicEnabled=data.Settings.AppMusicEnabled, AppMusicVolume=data.Settings.AppMusicVolume, ExternalEditor=data.Settings.ExternalEditor, EditorPreference=data.Settings.EditorPreference }); store.Save(data); return Snapshot();
             case "vaultUnlock":
                 if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello.");
-                var creating = !vault.Exists;
-                var master = SecretDialog.Ask(this, "Archivio chiavi e password", creating ? "Crea una password principale di almeno 12 caratteri:" : "Password principale:", creating);
-                await Task.Run(() => vault.Unlock(master)); return Snapshot();
+                return await CloudAction("accountLogin",p);
             case "vaultLock": if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello."); StopAllRecordings(); StopBundledAgent(); vault.Lock(); return Snapshot();
             case "helloEnable": return await EnableHello();
             case "helloUnlock": return await UnlockHello();
             case "helloDisable":
-                if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello.");
-                var disablingMaster = Secret("Disabilita Windows Hello", "Conferma la password principale. L'archivio resterà accessibile con la password.");
-                await Task.Run(() => vault.DisableWindowsHello(disablingMaster)); return Snapshot();
+                await VerifyLocalIdentity("Disabilita Windows Hello");
+                if(!Confirm("Disabilitare Windows Hello su questo PC? Senza Hello dovrai essere online per accedere con il tuo account e la 2FA."))return Snapshot();
+                AccountUnlocks.ConfirmHello(cloud.State.Owner,"");
+                await Task.Run(()=>vault.DisableWindowsHelloForUnlockedVault());return Snapshot();
             case "vaultGenerate":
                 if (keyGenerationBusy) throw new InvalidOperationException("Una generazione e gia in corso.");
                 keyGenerationBusy = true;

@@ -3,13 +3,13 @@ function waitForAccountActivation(){
  return new Promise(resolve=>{
   const gate=accessGate('COLLEGA IL TUO ACCOUNT','UNSC RELAY / ATTIVAZIONE DISPOSITIVO');gate.classList.add('access-login');gate.removeAttribute('role');gate.prepend(createAccessScene());
   const card=document.createElement('section');card.className='access-card';const h=document.createElement('h2');h.textContent='La tua console, su tutti i dispositivi.';card.append(h);
-  const text=document.createElement('p');text.textContent='Il primo accesso richiede un account registrato e abilitato sul sito UNSC. I dati già presenti su questo PC rimangono intatti. Dopo il collegamento potrai usare l’app anche offline.';card.append(text);
+  const text=document.createElement('p');text.textContent='Il primo accesso richiede un account registrato e abilitato sul sito UNSC. I dati già presenti su questo PC rimangono intatti. Dopo l’accesso puoi abilitare manualmente Windows Hello per usare l’app offline.';card.append(text);
   const status=document.createElement('p');status.setAttribute('role','status');
   const login=button('Accedi al tuo account',async()=>{login.disabled=true;status.textContent='Completa l’accesso nella schermata protetta di Relay.';try{update(await rpc('accountLogin'));if(state.account?.requiresLink)throw Error('Attivazione non completata.');resolve()}catch(e){status.textContent=e.message;login.disabled=false}},'primary access-auth-button');login.prepend(accessIcon('password'));
   const register=button('Crea account',async()=>{register.disabled=true;try{update(await rpc('accountRegister'));if(!state.account?.requiresLink)resolve()}catch(e){status.textContent=e.message}finally{register.disabled=false}},'access-auth-button');register.disabled=true;register.title='Verifica disponibilità della registrazione';
   rpc('accountAvailability').then(v=>{register.disabled=!v.registrationAllowed;register.title=v.registrationAllowed?'Crea il tuo account personale':'Registrazioni temporaneamente chiuse';}).catch(()=>{register.title='Registrazione non disponibile offline';});
   const foot=document.createElement('p');foot.className='access-footnote';foot.textContent='La sessione di Relay è indipendente dal browser. Gli account amministrativi sono riservati al sito.';
-  card.append(login,register,status,foot,button('Esci da Relay',()=>rpc('applicationExit')));gate.append(card);
+  card.append(login,register,status,foot,accessUpdateButton(),button('Esci da Relay',()=>rpc('applicationExit')));gate.append(card);
  });
 }
 function cloudSetupDialog(){

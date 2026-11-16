@@ -10,26 +10,37 @@ public partial class MainWindow
     bool consoleReady;
     System.Diagnostics.Stopwatch? accessFinalWatch;
     bool accessBusy;
-    bool AppLocked => (windowsSessionLocked || data.Settings.RequireAppAuthentication && !appAuthenticated) && (!smokeTest||accessSmokeTest);
+    bool AppLocked => (windowsSessionLocked || (data.Settings.RequireAppAuthentication || cloud?.State.Activated==true) && !appAuthenticated) && (!smokeTest||accessSmokeTest);
     async Task VerifyLocalIdentity(string purpose,string? method=null,bool unlockArchive=false)
     {
         if(accessBusy||helloBusy)throw new InvalidOperationException("Una verifica di identità è già aperta.");
         if(!vault.Exists)throw new InvalidOperationException("Crea prima l’archivio con una password principale.");
         accessBusy=true;
         try {
-            if(method==null){var choice=new AccessApprovalDialog(this,purpose,"Conferma la tua identità. Non vengono condivise password o chiavi private.",vault.WindowsHello()!=null);if(choice.ShowDialog()!=true)throw new OperationCanceledException();method=choice.Method;}
-            if(method=="hello"){
+            if(method==null){var choice=new AccessApprovalDialog(this,purpose,"Conferma la tua identità. Non vengono condivise password o chiavi private.",AccountHelloAllowed(),account:cloud.State.Activated);if(choice.ShowDialog()!=true)throw new OperationCanceledException();method=choice.Method;}
+            if(method=="account"){await CloudAction("accountLogin",JsonSerializer.SerializeToElement(new{}));if(!vault.IsUnlocked)throw new InvalidOperationException("Accesso account non completato.");}
+            else if(method=="hello"){
+                if(!AccountHelloAllowed())throw new InvalidOperationException("Abilita manualmente Windows Hello per questo account e questo PC.");
                 if(unlockArchive)await UnlockHello();
                 else {helloBusy=true;try{var challenge=vault.PrepareWindowsHelloIdentity();var signature=await WindowsHelloService.SignAsync(challenge);try{await Task.Run(()=>vault.VerifyWindowsHelloIdentity(challenge,signature));}finally{CryptographicOperations.ZeroMemory(signature);}}finally{helloBusy=false;}}
             }
-            else if(method=="password"){var secret=Secret(purpose,"Conferma la password principale dell’archivio:");await Task.Run(()=>{vault.VerifyMasterPassword(secret);if(unlockArchive)vault.Unlock(secret);});}
+            else if(method=="password"&&!cloud.State.Activated){var secret=Secret(purpose,"Conferma la password principale dell’archivio:");await Task.Run(()=>{vault.VerifyMasterPassword(secret);if(unlockArchive)vault.Unlock(secret);});}
             else throw new InvalidOperationException("Metodo non disponibile.");
         } finally {accessBusy=false;}
+    }
+    void CompleteAppAuthentication(long generation)
+    {
+        if(generation!=authenticationGeneration){vault.Lock();throw new OperationCanceledException("La sessione Windows è stata bloccata. Ripeti l’accesso.");}
+        if(!vault.IsUnlocked)throw new InvalidOperationException("L’archivio non è stato sbloccato.");
+        var wasLocked=AppLocked;
+        windowsSessionLocked=false;DesktopLayer.Visibility=System.Windows.Visibility.Visible;
+        foreach(var floating in detachedWindows.Values)floating.Show();
+        appAuthenticated=true;if(wasLocked)accessFinalWatch=System.Diagnostics.Stopwatch.StartNew();
     }
     object AccessBootstrap()
     {
         if(!AppLocked&&!AccountLocked)return Snapshot();
-        return new {account=CloudStatus(),data=new {profiles=Array.Empty<object>(),folders=Array.Empty<string>(),snippets=Array.Empty<object>(),workspaces=Array.Empty<object>(),settings=new {requireAppAuthentication=true,startupVolume=data.Settings.StartupVolume}},vault=new{exists=vault.Exists,unlocked=false,keys=Array.Empty<object>(),windowsHello=vault.WindowsHello()!=null},hostKeys=Array.Empty<object>(),version=CurrentVersion.ToString(),diagnostic=false,appLocked=AppLocked};
+        return new {account=CloudStatus(),data=new {profiles=Array.Empty<object>(),folders=Array.Empty<string>(),snippets=Array.Empty<object>(),workspaces=Array.Empty<object>(),settings=new {requireAppAuthentication=true,startupVolume=data.Settings.StartupVolume}},vault=new{exists=vault.Exists,unlocked=false,keys=Array.Empty<object>(),windowsHello=AccountHelloAllowed()},hostKeys=Array.Empty<object>(),version=CurrentVersion.ToString(),diagnostic=false,appLocked=AppLocked};
     }
     async Task<object?> AccessAction(string action,JsonElement p)
     {
@@ -40,14 +51,10 @@ public partial class MainWindow
                 if(startupSequencePlaying)throw new InvalidOperationException("Attendi la sequenza iniziale.");
                 if(accessBusy||helloBusy)throw new InvalidOperationException("Una verifica è già in corso.");
                 var generation=authenticationGeneration;var method=S(p,"method");
-                if(method=="hello")await VerifyLocalIdentity("Accesso a UNSC Relay","hello",true);
-                else if(method=="password"){
-                    var password=S(p,"password");if(password.Length is <1 or >4096)throw new ArgumentException("Inserisci la password principale.");
-                    accessBusy=true;try{await Task.Run(()=>vault.Unlock(password));}finally{accessBusy=false;}
-                }else throw new ArgumentException("Scegli un metodo di accesso disponibile.");
-                if(generation!=authenticationGeneration){vault.Lock();throw new OperationCanceledException("La sessione Windows è stata bloccata. Ripeti l’accesso.");}
-                if(!vault.IsUnlocked)throw new InvalidOperationException("L’archivio non è stato sbloccato.");
-                windowsSessionLocked=false;DesktopLayer.Visibility=System.Windows.Visibility.Visible;foreach(var floating in detachedWindows.Values)floating.Show();appAuthenticated=true;accessFinalWatch=System.Diagnostics.Stopwatch.StartNew();return Snapshot();
+                if(method=="account")return await CloudAction("accountLogin",p);
+                if(method!="hello")throw new ArgumentException("Accedi con il tuo account oppure con Windows Hello abilitato manualmente.");
+                await VerifyLocalIdentity("Accesso a UNSC Relay","hello",true);
+                CompleteAppAuthentication(generation);return Snapshot();
             case "applicationExit":
                 if(!AppLocked&&!AccountLocked)throw new InvalidOperationException("Accesso già completato.");Close();return null;
             case "accessSettings":

@@ -215,13 +215,13 @@ test('key manager and settings expose actual development state', async ({ page }
 test('archive access has actionable creation, native Hello and password choices', async ({page}) => {
   await page.locator('#keys-btn').click();
   await page.getByRole('button', {name:'Accesso / Windows Hello', exact:true}).click();
-  await expect(page.locator('#modal-body')).toContainText('ripetila per confermarla');
+  await expect(page.locator('#modal-body')).toContainText('Account Windows condiviso?');
   await expect(page.locator('#modal-body')).not.toContainText('Bitwarden');
-  await page.getByRole('button',{name:'Crea archivio con password',exact:true}).click();
-  await page.getByRole('button',{name:'Abilita Windows Hello',exact:true}).click();
+  await page.getByRole('button',{name:'Accedi con il tuo account',exact:true}).click();
+  await page.getByRole('button',{name:'Abilita Windows Hello su questo PC',exact:true}).click();
   await expect(page.locator('#modal-body')).toContainText('Windows Hello abilitato');
   await page.getByRole('button',{name:'Blocca archivio',exact:true}).click();
-  await expect(page.getByRole('button',{name:'Sblocca con password',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Accedi con il tuo account',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Sblocca con Windows Hello',exact:true}).click();
   expect(await page.evaluate(()=>window.testCalls.filter(c=>c.action.startsWith('passkey')))).toEqual([]);
   expect(await page.evaluate(()=>window.testCalls.some(c=>c.action==='helloUnlock'))).toBe(true);
@@ -342,7 +342,7 @@ test('drag from Windows uses native file objects and the visible SFTP destinatio
 });
 
 test('locked archive is requested on startup and password action unlocks it',async({page})=>{
- await page.evaluate(()=>{window.fixtureState.vault.exists=true;window.fixtureState.vault.unlocked=false;boot()});await expect(page.getByRole('heading',{name:'Sblocca archivio',exact:true})).toBeVisible();await page.getByRole('button',{name:'Sblocca con password',exact:true}).click();await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#vault-state')).toHaveText('SBLOCCATO');
+ await page.evaluate(()=>{window.fixtureState.vault.exists=true;window.fixtureState.vault.unlocked=false;boot()});await expect(page.getByRole('heading',{name:'Sblocca archivio',exact:true})).toBeVisible();await page.getByRole('button',{name:'Accedi con il tuo account',exact:true}).click();await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#vault-state')).toHaveText('SBLOCCATO');
 });
 test('files default to type groups and support independent grouping and order',async({page})=>{
  await createConnection(page,'Grouped fixture','sftp');await page.evaluate(()=>window.fixtureRemoteFiles=[{name:'b.txt',path:'/home/test/b.txt',size:20,modified:'2026-11-14',directory:false},{name:'a.log',path:'/home/test/a.log',size:10,modified:'2026-11-14',directory:false},{name:'a.txt',path:'/home/test/a.txt',size:30,modified:'2026-11-14',directory:false}]);await page.locator('.profile-item').dblclick();await expect(page.locator('.file-column[data-file-side=remote] .file-group')).toHaveText(['▾ File LOG (1)','▾ File TXT (2)']);await page.locator('[name=group-remote]').selectOption('none');await expect(page.locator('.file-column[data-file-side=remote] .file-group')).toHaveCount(0);await page.locator('[name=sort-remote]').selectOption('size');await page.locator('[name=order-remote]').selectOption('desc');await expect(page.locator('.file-column[data-file-side=remote] .workspace-file-row>span')).toHaveText(['a.txt','b.txt','a.log']);
@@ -358,7 +358,7 @@ test('OSC7 follow directory and explicit reverse navigation use the matching SSH
 });
 
 test('startup Hello cancellation retains password unlock and does not open an SSH pane',async({page})=>{
- await page.evaluate(()=>{window.fixtureState.vault.exists=true;window.fixtureState.vault.windowsHello=true;window.fixtureState.vault.unlocked=false;window.fixtureHelloCancel=true;boot()});await page.getByRole('button',{name:'Sblocca con Windows Hello',exact:true}).click();await expect(page.getByRole('heading',{name:'Sblocca archivio',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Sblocca con password',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Sblocca con password',exact:true}).click();await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#tabs .tab')).toHaveCount(0);
+ await page.evaluate(()=>{window.fixtureState.vault.exists=true;window.fixtureState.vault.windowsHello=true;window.fixtureState.vault.unlocked=false;window.fixtureHelloCancel=true;boot()});await page.getByRole('button',{name:'Sblocca con Windows Hello',exact:true}).click();await expect(page.getByRole('heading',{name:'Sblocca archivio',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Accedi con il tuo account',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Accedi con il tuo account',exact:true}).click();await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#tabs .tab')).toHaveCount(0);
 });
 
 
@@ -652,11 +652,11 @@ test('connection chooser scrolls to every session and cancel at compact height',
  await page.setViewportSize({width:1100,height:700});await page.goto('https://relay.local/');await page.getByRole('button',{name:'Nuova connessione',exact:true}).first().click();const dialog=page.locator('dialog');await expect(dialog).toBeVisible();await dialog.getByRole('button',{name:'Annulla',exact:true}).scrollIntoViewIfNeeded();await expect(dialog.getByRole('button',{name:'Annulla',exact:true})).toBeInViewport();const body=await page.locator('#modal-body').evaluate(e=>({h:e.clientHeight,total:e.scrollHeight,overflow:getComputedStyle(e).overflowY}));expect(body.total).toBeGreaterThan(body.h);expect(body.overflow).toBe('auto');await page.screenshot({path:'artifacts/ui-024-picker.png'});
 });
 test('API and app authentication controls use separate tabs and partial verified updates',async({page})=>{
- await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Accesso',exact:true}).click();const app=page.getByLabel('Richiedi autenticazione all’apertura');await expect(app).not.toBeChecked();await app.check();await page.getByRole('tab',{name:'ChatGPT',exact:true}).click();const api=page.getByLabel('Abilita API locale per ChatGPT / Codex');await expect(api).not.toBeChecked();await api.check();await page.getByRole('button',{name:'Salva API e verifica identità',exact:true}).click();expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='accessSettings').at(-1).payload)).toEqual({assistantApiEnabled:true});await page.getByRole('tab',{name:'Accesso',exact:true}).click();await expect(app).toBeChecked();await page.getByRole('button',{name:'Salva accesso e verifica identità',exact:true}).click();expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='accessSettings').at(-1).payload)).toEqual({requireAppAuthentication:true});expect(await page.evaluate(()=>state.data.settings.assistantApiEnabled)).toBe(true);
+ await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Accesso',exact:true}).click();const app=page.getByLabel('Richiedi autenticazione all’apertura');await expect(app).toBeChecked();await expect(app).toBeDisabled();await page.getByRole('tab',{name:'ChatGPT',exact:true}).click();const api=page.getByLabel('Abilita API locale per ChatGPT / Codex');await expect(api).not.toBeChecked();await api.check();await page.getByRole('button',{name:'Salva API e verifica identità',exact:true}).click();expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='accessSettings').at(-1).payload)).toEqual({assistantApiEnabled:true});await page.getByRole('tab',{name:'Accesso',exact:true}).click();await expect(app).toBeChecked();await page.getByRole('button',{name:'Salva accesso e verifica identità',exact:true}).click();expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='accessSettings').at(-1).payload)).toEqual({requireAppAuthentication:true});expect(await page.evaluate(()=>state.data.settings.assistantApiEnabled)).toBe(true);
 });
 
 test('protected startup keeps console hidden until identity and final animated sequence',async({page})=>{
- await page.addInitScript(()=>{window.holdFixtureMedia=true;});await page.goto('https://relay.local/');await page.evaluate(async()=>{fixtureState.appLocked=true;fixtureState.vault.exists=true;update(await rpc('bootstrap'));});await expect(page.locator('.topbar')).toHaveCSS('visibility','hidden');await page.locator('#sequence-video').evaluate(v=>v.dispatchEvent(new Event('ended')));await expect(page.getByLabel('Password principale',{exact:true})).toBeVisible();await page.getByLabel('Password principale',{exact:true}).fill('Fixture login password!');await page.getByRole('button',{name:'Accedi con password',exact:true}).click();await expect(page.locator('#access-gate h1')).toHaveText('ACCESSO AUTORIZZATO');await expect(page.locator('.topbar')).toHaveCSS('visibility','hidden');await expect(page.locator('#access-gate')).toBeHidden({timeout:7000});await expect(page.locator('.topbar')).toHaveCSS('visibility','visible');expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='applicationAuthenticate').length)).toBe(1);expect(await page.evaluate(()=>testCalls.some(c=>c.action==='consoleReady'))).toBeTruthy();
+ await page.addInitScript(()=>{window.holdFixtureMedia=true;});await page.goto('https://relay.local/');await page.evaluate(async()=>{fixtureState.appLocked=true;fixtureState.vault.exists=true;update(await rpc('bootstrap'));});await expect(page.locator('.topbar')).toHaveCSS('visibility','hidden');await page.locator('#sequence-video').evaluate(v=>v.dispatchEvent(new Event('ended')));await expect(page.getByLabel('Password principale',{exact:true})).toHaveCount(0);await page.getByRole('button',{name:'Accedi con il tuo account',exact:true}).click();await expect(page.locator('#access-gate h1')).toHaveText('ACCESSO AUTORIZZATO');await expect(page.locator('.topbar')).toHaveCSS('visibility','hidden');await expect(page.locator('#access-gate')).toBeHidden({timeout:7000});await expect(page.locator('.topbar')).toHaveCSS('visibility','visible');expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='applicationAuthenticate').length)).toBe(1);expect(await page.evaluate(()=>testCalls.some(c=>c.action==='consoleReady'))).toBeTruthy();
 });
 
 
@@ -669,13 +669,13 @@ test('long login starts fallback only after primary ends and retains track for e
 
 
 test('included lightweight soundtrack decodes with its full duration',async({page})=>{
- test.skip(!fs.existsSync(path.join(root,'media/background-theme.m4a')), 'Personal soundtrack is excluded from the public source; UI playback is covered with silent fixtures.');
+ test.skip(!fs.existsSync(path.join(root,'media/background-theme.m4a')), 'Personal soundtrack is excluded from public source; UI playback uses silent fixtures.');
  await page.goto('https://relay.local/');const duration=await page.evaluate(()=>new Promise((resolve,reject)=>{const audio=new Audio();const timer=setTimeout(()=>reject(new Error('Audio metadata timeout')),10000);audio.onloadedmetadata=()=>{clearTimeout(timer);resolve(audio.duration);audio.src=''};audio.onerror=()=>{clearTimeout(timer);reject(new Error('Audio decode failed '+audio.error?.code))};audio.preload='metadata';audio.src='media/background-theme.m4a';audio.load();}));expect(duration).toBeGreaterThan(2368);expect(duration).toBeLessThan(2370);
 });
 
 
 test('settings tabs keep controls accessible and archive access in its category',async({page})=>{
- await page.setViewportSize({width:1100,height:720});await page.locator('#settings-btn').click();await expect(page.getByRole('tab')).toHaveCount(7);await expect(page.locator('#settings-panel-features')).toBeHidden();await page.getByRole('tab',{name:'Accesso',exact:true}).click();await expect(page.getByRole('button',{name:'Crea archivio con password',exact:true})).toBeVisible();await page.getByRole('button',{name:'Salva blocco automatico',exact:true}).scrollIntoViewIfNeeded();await expect(page.getByRole('button',{name:'Salva blocco automatico',exact:true})).toBeInViewport();await page.getByRole('tab',{name:'Accesso',exact:true}).focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('tab',{name:'ChatGPT',exact:true})).toBeFocused();await expect(page.locator('#settings-panel-chatgpt')).toBeVisible();await page.getByRole('tab',{name:'Audio',exact:true}).click();await page.screenshot({path:'artifacts/ui-025-settings-compact.png'});await page.setViewportSize({width:1600,height:1000});await page.screenshot({path:'artifacts/ui-025-settings.png'});
+ await page.setViewportSize({width:1100,height:720});await page.locator('#settings-btn').click();await expect(page.getByRole('tab')).toHaveCount(7);await expect(page.locator('#settings-panel-features')).toBeHidden();await page.getByRole('tab',{name:'Accesso',exact:true}).click();await expect(page.getByRole('button',{name:'Accedi con il tuo account',exact:true})).toBeVisible();await page.getByRole('button',{name:'Salva blocco automatico',exact:true}).scrollIntoViewIfNeeded();await expect(page.getByRole('button',{name:'Salva blocco automatico',exact:true})).toBeInViewport();await page.getByRole('tab',{name:'Accesso',exact:true}).focus();await page.keyboard.press('ArrowDown');await expect(page.getByRole('tab',{name:'ChatGPT',exact:true})).toBeFocused();await expect(page.locator('#settings-panel-chatgpt')).toBeVisible();await page.getByRole('tab',{name:'Audio',exact:true}).click();await page.screenshot({path:'artifacts/ui-025-settings-compact.png'});await page.setViewportSize({width:1600,height:1000});await page.screenshot({path:'artifacts/ui-025-settings.png'});
 });
 
 test('audio preview saves zero and full volume without changing sequence audio',async({page})=>{
@@ -687,7 +687,7 @@ test('closing unsaved audio preview restores saved preference and does not affec
 });
 
 test('archive auto lock updates preserve music preference and settings modal',async({page})=>{
- await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Audio',exact:true}).click();await page.getByRole('slider',{name:'Volume della musica'}).fill('65');await page.getByRole('button',{name:'Salva audio',exact:true}).click();await page.getByRole('tab',{name:'Accesso',exact:true}).click();await page.locator('[name=autoLockMinutes]').fill('25');await page.getByRole('button',{name:'Salva blocco automatico',exact:true}).click();await expect(page.locator('#modal-title')).toHaveText('Impostazioni');expect(await page.evaluate(()=>state.data.settings.appMusicVolume)).toBe(.65);await page.getByRole('button',{name:'Crea archivio con password',exact:true}).click();await page.getByRole('button',{name:'Abilita Windows Hello',exact:true}).click();await expect(page.locator('#modal-title')).toHaveText('Impostazioni');await expect(page.getByRole('button',{name:'Disabilita Windows Hello',exact:true})).toBeVisible();await page.locator('#modal-close').click();await page.locator('#keys-btn').click();await expect(page.locator('#modal')).not.toHaveClass(/settings-modal/);
+ await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Audio',exact:true}).click();await page.getByRole('slider',{name:'Volume della musica'}).fill('65');await page.getByRole('button',{name:'Salva audio',exact:true}).click();await page.getByRole('tab',{name:'Accesso',exact:true}).click();await page.locator('[name=autoLockMinutes]').fill('25');await page.getByRole('button',{name:'Salva blocco automatico',exact:true}).click();await expect(page.locator('#modal-title')).toHaveText('Impostazioni');expect(await page.evaluate(()=>state.data.settings.appMusicVolume)).toBe(.65);await page.getByRole('button',{name:'Accedi con il tuo account',exact:true}).click();await page.getByRole('button',{name:'Abilita Windows Hello su questo PC',exact:true}).click();await expect(page.locator('#modal-title')).toHaveText('Impostazioni');await expect(page.getByRole('button',{name:'Disabilita Windows Hello su questo PC',exact:true})).toBeVisible();await page.locator('#modal-close').click();await page.locator('#keys-btn').click();await expect(page.locator('#modal')).not.toHaveClass(/settings-modal/);
 });
 
 test('audio settings display music rights disclaimer',async({page})=>{await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Audio',exact:true}).click();await expect(page.getByRole('heading',{name:'Musica e diritti',exact:true})).toBeVisible();await expect(page.locator('#settings-panel-audio')).toContainText('non affiliato né approvato da Microsoft o Halo Studios');});
@@ -852,4 +852,32 @@ test('shutdown from account access removes the gate and stops intro music before
  await expect(page.locator('#access-gate')).toHaveCount(0);await expect(page.locator('#sequence')).toBeVisible();
  expect(await page.evaluate(()=>startupTheme===null&&startupEnding)).toBe(true);
  expect(await page.locator('#sequence-video').evaluate(v=>v.src.endsWith('/shutdown.mp4'))).toBe(true);
+});
+
+
+test('updates can be opened before account activation and before local unlock without authenticating',async({page})=>{
+ for(const method of ['account','local']){
+  await page.evaluate(method=>{state.appLocked=true;state.account={requiresLink:method==='account'};state.vault.windowsHello=false;method==='account'?waitForAccountActivation():waitForApplicationLogin()},method);
+  await page.getByRole('button',{name:'Aggiornamenti',exact:true}).click();
+  await expect(page.locator('#modal-title')).toHaveText('Aggiornamenti');await expect(page.locator('#access-gate')).toHaveCount(1);
+  await page.getByRole('button',{name:'Controlla aggiornamenti',exact:true}).click();await expect(page.locator('#update-progress')).toContainText('Disponibile');
+  expect(await page.evaluate(()=>testCalls.some(c=>['accountLogin','applicationAuthenticate'].includes(c.action)))).toBe(false);
+  await page.locator('#modal-close').click();await expect(page.locator('#access-gate')).toBeVisible();
+  await page.evaluate(()=>document.getElementById('access-gate').remove());
+ }
+});
+
+for(const hello of [false,true])test(`account login exposes Hello only with manual consent: ${hello}`,async({page})=>{
+ await page.evaluate(hello=>{state.appLocked=true;state.vault={exists:true,unlocked:false,windowsHello:hello,keys:[]};waitForApplicationLogin();},hello);
+ await expect(page.getByRole('button',{name:'Accedi con il tuo account',exact:true})).toBeVisible();
+ await expect(page.getByLabel('Password principale',{exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Accedi con Windows Hello',exact:true})).toHaveCount(hello?1:0);
+ await expect(page.getByRole('button',{name:'Aggiornamenti',exact:true})).toBeVisible();
+ if(!hello)await expect(page.locator('.access-footnote')).toContainText('serve una connessione');
+});
+test('manual Hello settings explain shared Windows identity and do not request legacy password',async({page})=>{
+ await page.evaluate(()=>{state.vault={exists:true,unlocked:true,windowsHello:false,keys:[]};settingsDialog('access');});
+ await expect(page.getByRole('button',{name:'Abilita Windows Hello su questo PC',exact:true})).toBeVisible();
+ await expect(page.locator('#modal')).toContainText('Account Windows condiviso?');
+ await expect(page.getByLabel('Password principale',{exact:true})).toHaveCount(0);
 });

@@ -16,6 +16,9 @@ public partial class MainWindow
             var empty=JsonSerializer.SerializeToElement(new{});const string master="Access smoke password 024!";vault.Unlock(master);vault.Lock();
             data.Settings=data.Settings with{RequireAppAuthentication=true,AssistantApiEnabled=false};
             checks["startupBootstrapRedacted"]=AppLocked&&!JsonSerializer.Serialize(AccessBootstrap()).Contains("dataPath");
+            var updateStatus=JsonSerializer.Serialize(await Execute("updateTokenStatus",empty));
+            checks["lockedConsoleAllowsUpdaterStatusOnly"]=updateStatus.Contains("saved")&&!updateStatus.Contains("token",StringComparison.OrdinalIgnoreCase);
+            try{await Execute("accountProfile",empty);checks["lockedConsoleStillRejectsProfile"]=false;}catch(InvalidOperationException){checks["lockedConsoleStillRejectsProfile"]=true;}
             try{await Execute("openData",empty);checks["lockedConsoleRejectsRpc"]=false;}catch(InvalidOperationException){checks["lockedConsoleRejectsRpc"]=true;}
             var loginDialog=new AccessApprovalDialog(this,"Login fixture","Attesa senza autenticazione",false,true);
             var apiDialog=new AccessApprovalDialog(this,"API fixture","Richiesta temporanea",false);
@@ -23,12 +26,11 @@ public partial class MainWindow
             if(Environment.GetEnvironmentVariable("RELAY_VERIFY_LOGIN_WAIT")=="1"){
                 loginDialog.Opacity=0;loginDialog.ShowActivated=false;loginDialog.ShowInTaskbar=false;loginDialog.WindowStartupLocation=System.Windows.WindowStartupLocation.Manual;loginDialog.Left=-20000;loginDialog.Top=-20000;loginDialog.Show();await Task.Delay(TimeSpan.FromSeconds(125));checks["loginRemainsLockedAfterTwoMinutes"]=loginDialog.IsVisible&&AppLocked&&!exitAllowed;loginDialog.Close();
             }
-            try{await AccessAction("applicationAuthenticate",JsonSerializer.SerializeToElement(new{method="password",password="Incorrect fixture password"}));checks["inlineWrongPasswordFailsClosed"]=false;}catch(System.Security.Cryptography.CryptographicException){checks["inlineWrongPasswordFailsClosed"]=AppLocked&&!vault.IsUnlocked;}
-            await AccessAction("applicationAuthenticate",JsonSerializer.SerializeToElement(new{method="password",password=master}));
-            checks["inlinePasswordUnlocksAppAndVault"]=!AppLocked&&vault.IsUnlocked;
+            try{await AccessAction("applicationAuthenticate",JsonSerializer.SerializeToElement(new{method="password",password=master}));checks["legacyPasswordNotAvailableForNormalLogin"]=false;}catch(ArgumentException){checks["legacyPasswordNotAvailableForNormalLogin"]=AppLocked&&!vault.IsUnlocked;}
+            checks["helloIsNotImplicitlyEnabled"]=!AccountHelloAllowed();
+            vault.Unlock(master);CompleteAppAuthentication(authenticationGeneration);
+            checks["completedAuthenticationUnlocksApp"]=!AppLocked&&vault.IsUnlocked;
             checks["lockedBootstrapNeverContainsPrivateKey"]=!JsonSerializer.Serialize(AccessBootstrap()).Contains("PRIVATE KEY");
-            appAuthenticated=true;
-            checks["existingMethodsPasswordAndHello"]=vault.Exists&&vault.WindowsHello()==null;
             var exportedKey=UnscRelay.Core.KeyGeneration.Generate(vault,"Export fixture","ed25519");var exportBytes=vault.Read(exportedKey.Id);var exportPath=Path.Combine(dataPath,"export-fixture.key");
             try{PrivateKeyExport.Write(exportPath,exportBytes);checks["privateExportPreservesExactBytes"]=File.ReadAllBytes(exportPath).SequenceEqual(exportBytes);var exportAcl=System.IO.FileSystemAclExtensions.GetAccessControl(new FileInfo(exportPath));var owner=System.Security.Principal.WindowsIdentity.GetCurrent().User!;var exportRules=exportAcl.GetAccessRules(true,true,typeof(System.Security.Principal.SecurityIdentifier)).Cast<System.Security.AccessControl.FileSystemAccessRule>().ToArray();checks["privateExportIsRestrictedToCurrentUser"]=exportAcl.AreAccessRulesProtected&&exportRules.Length==1&&exportRules[0].IdentityReference.Equals(owner)&&exportRules[0].AccessControlType==System.Security.AccessControl.AccessControlType.Allow;}
             finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(exportBytes);if(File.Exists(exportPath))File.Delete(exportPath);}

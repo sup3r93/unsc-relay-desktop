@@ -53,7 +53,14 @@ public sealed partial class KeyVault
     {
         lock (_gate)
         {
-            VerifyMasterPassword(masterPassword); var kek = HelloKey(challenge, signature, _salt!);
+            VerifyMasterPassword(masterPassword); EnableWindowsHelloForUnlockedVault(challenge,signature);
+        }
+    }
+    public void EnableWindowsHelloForUnlockedVault(WindowsHelloChallenge challenge, byte[] signature)
+    {
+        lock (_gate)
+        {
+            RequireUnlocked(); var kek = HelloKey(challenge, signature, _salt!);
             var previous = _windowsHello; var legacy = _passkeys.ToList();
             try
             {
@@ -95,7 +102,14 @@ public sealed partial class KeyVault
     {
         lock (_gate)
         {
-            VerifyMasterPassword(password); var previous = _windowsHello; _windowsHello = null;
+            VerifyMasterPassword(password); DisableWindowsHelloForUnlockedVault();
+        }
+    }
+    public void DisableWindowsHelloForUnlockedVault()
+    {
+        lock (_gate)
+        {
+            RequireUnlocked(); var previous = _windowsHello; _windowsHello = null;
             try { Save(); } catch { _windowsHello = previous; throw; }
         }
     }

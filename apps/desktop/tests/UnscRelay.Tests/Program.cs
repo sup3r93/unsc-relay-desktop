@@ -1,3 +1,4 @@
+if(args.Length==1&&args[0]=="--account-unlock-only")return AccountUnlockChecks.Run();
 if(args.Length==1&&args[0]=="--native-certificates-only")return NativeCertificateChecks.Run();
 if(args.Length==1&&args[0]=="--transfer-window-only"){
  var checks=new[]{UnscRelay.Core.TransferWindow.Allowed(12*60,9*60,18*60),!UnscRelay.Core.TransferWindow.Allowed(18*60,9*60,18*60),UnscRelay.Core.TransferWindow.Allowed(23*60,22*60,6*60),UnscRelay.Core.TransferWindow.Allowed(5*60,22*60,6*60),!UnscRelay.Core.TransferWindow.Allowed(12*60,22*60,6*60),UnscRelay.Core.TransferWindow.Allowed(0,null,null)};

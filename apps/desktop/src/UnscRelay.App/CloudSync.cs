@@ -115,7 +115,10 @@ public partial class MainWindow
             if(action=="accountLogin"||action=="accountRegister"||action=="accountSecurity"){
                 if(startupSequencePlaying)throw new InvalidOperationException("Attendi la sequenza iniziale.");
                 var accountAction=action=="accountRegister"?"register":action=="accountSecurity"?S(p,"action"):"login";
-                await cloud.LoginAsync(cloudLifetime.Token,new InAppAccountBrowser(this,dataPath),accountAction);cloudLastVerified=DateTimeOffset.UtcNow;CloudNotify("Dispositivo autorizzato per "+cloud.State.Name+". La copia locale rimane disponibile offline.");return AccessBootstrap();
+                var generation=authenticationGeneration;
+                await cloud.LoginAsync(cloudLifetime.Token,new InAppAccountBrowser(this,dataPath),accountAction);
+                if(accountAction is "login" or "register")await UnlockOnlineAfterLogin(generation);
+                cloudLastVerified=DateTimeOffset.UtcNow;CloudNotify("Account verificato per "+cloud.State.Name+". Windows Hello offline è disponibile solo dopo abilitazione manuale.");return AccessBootstrap();
             }
             if(action=="accountProfile")return await cloud.Profile(cloudLifetime.Token);
             if(action=="accountLogout"){
