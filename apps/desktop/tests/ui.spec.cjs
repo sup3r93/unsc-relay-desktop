@@ -6,6 +6,11 @@ test.beforeEach(async ({ page, context }) => {
   await context.route('https://relay.local/**', route => {
     const url = new URL(route.request().url());
     const target = path.join(root, url.pathname === '/' ? 'index.html' : decodeURIComponent(url.pathname));
+    // Synthetic, silent fixtures keep UI tests independent of personal media assets.
+    if (/\.(mp4|mp3|m4a)$/.test(url.pathname) && !fs.existsSync(target)) {
+      const video=url.pathname.endsWith('.mp4');
+      return route.fulfill({contentType:video?'video/mp4':'audio/wav',body:fs.readFileSync(path.join(__dirname,'fixtures',video?'silent-video.mp4':'silent-audio.wav'))});
+    }
     if (!target.startsWith(root + path.sep) || !fs.existsSync(target)) return route.fulfill({ status: 404, body: '' });
     const type = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.mp4': 'video/mp4', '.svg': 'image/svg+xml' }[path.extname(target)] || 'application/octet-stream';
     return route.fulfill({ contentType: type, body: fs.readFileSync(target) });
@@ -664,6 +669,7 @@ test('long login starts fallback only after primary ends and retains track for e
 
 
 test('included lightweight soundtrack decodes with its full duration',async({page})=>{
+ test.skip(!fs.existsSync(path.join(root,'media/background-theme.m4a')), 'Personal soundtrack is excluded from the public source; UI playback is covered with silent fixtures.');
  await page.goto('https://relay.local/');const duration=await page.evaluate(()=>new Promise((resolve,reject)=>{const audio=new Audio();const timer=setTimeout(()=>reject(new Error('Audio metadata timeout')),10000);audio.onloadedmetadata=()=>{clearTimeout(timer);resolve(audio.duration);audio.src=''};audio.onerror=()=>{clearTimeout(timer);reject(new Error('Audio decode failed '+audio.error?.code))};audio.preload='metadata';audio.src='media/background-theme.m4a';audio.load();}));expect(duration).toBeGreaterThan(2368);expect(duration).toBeLessThan(2370);
 });
 
