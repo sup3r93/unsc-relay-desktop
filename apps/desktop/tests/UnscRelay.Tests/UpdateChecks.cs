@@ -6,10 +6,13 @@ using UnscRelay.Core;
 internal sealed class UpdateFixture : HttpMessageHandler
 {
     public byte[] Bytes { get; set; } = Encoding.UTF8.GetBytes("Installer fixture, never executed");
+    public int Requests { get; private set; }
+    public Action? OnAssetRequest { get; set; }
     public bool Mismatch { get; set; }
     public bool MissingDigest { get; set; }
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
     {
+        Requests++;
         if (request.RequestUri!.Host != "api.github.com") throw new Exception("Unexpected update host");
         if (request.Headers.Authorization?.Parameter != "test-token") throw new Exception("Missing private repository authentication");
         if (request.RequestUri.AbsolutePath.EndsWith("/latest"))
@@ -18,6 +21,7 @@ internal sealed class UpdateFixture : HttpMessageHandler
             var json = System.Text.Json.JsonSerializer.Serialize(new { tag_name = "v0.2.15", body = "Test release", assets = new[] { new { id = 123, name = "UNSC-Relay-Setup-0.2.15.exe", digest = MissingDigest ? null : "sha256:" + hash } } });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
         }
+        OnAssetRequest?.Invoke();
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Mismatch ? [1, 2, 3] : Bytes) });
     }
 }
@@ -29,6 +33,34 @@ internal static class UpdateChecks
         var release = await updates.CheckAsync("test-token", new Version(0, 1, 0), CancellationToken.None);
         assert(release?.Version == "v0.2.15", "Private GitHub release version detected");
         assert(await updates.CheckAsync("test-token", new Version(0, 2, 15), CancellationToken.None) == null, "Same version does not trigger update");
+        var outside = Path.Combine(directory,"outside-download-fixture"); Directory.CreateDirectory(outside); File.WriteAllText(Path.Combine(outside,"sentinel.txt"),"unchanged");
+        var alias = Path.Combine(directory,"linked-download-fixture"); Directory.CreateSymbolicLink(alias,outside);
+        var beforeRequests = fixture.Requests;
+        try { await updates.DownloadAsync(release!,"test-token",alias,CancellationToken.None); throw new Exception("Linked update root accepted"); }
+        catch(IOException) { assert(fixture.Requests==beforeRequests&&File.ReadAllText(Path.Combine(outside,"sentinel.txt"))=="unchanged"&&Directory.GetFileSystemEntries(outside).Length==1,"Linked download root rejected before network or external writes"); }
+        var switched=Path.Combine(directory,"switched-download-fixture"); Directory.CreateDirectory(switched);
+        fixture.OnAssetRequest=()=>{Directory.Move(switched,switched+"-original");Directory.CreateSymbolicLink(switched,outside);};
+        try { await updates.DownloadAsync(release!,"test-token",switched,CancellationToken.None); throw new Exception("Redirect during HTTP request accepted"); }
+        catch(IOException) { assert(Directory.GetFileSystemEntries(outside).Length==1&&File.ReadAllText(Path.Combine(outside,"sentinel.txt"))=="unchanged","Download rechecks parents after HTTP response before opening output"); }
+        finally { fixture.OnAssetRequest=null; }
+        foreach(var invalid in new[]{release! with { FileName="a:stream.exe" },release! with { FileName="../installer.exe" },release! with { Version="not-a-version" },release! with { AssetId=-1 },release! with { Sha256=new string('z',64) }})
+        {
+            beforeRequests=fixture.Requests;
+            try { await updates.DownloadAsync(invalid,"test-token",directory,CancellationToken.None); throw new Exception("Invalid download metadata accepted"); }
+            catch(InvalidDataException) { assert(fixture.Requests==beforeRequests,"Invalid download metadata rejected before network or file creation"); }
+        }
+        if(OperatingSystem.IsWindows())
+        {
+            var protectedDirectory=Path.Combine(directory,"locked-download-fixture"); var locked=false;
+            var protectedPath=await updates.DownloadAsync(release!,"test-token",protectedDirectory,CancellationToken.None,p=>
+            {
+                if(p.Stage!="verify")return;
+                var candidate=Directory.GetFiles(protectedDirectory).Single();
+                try { using var overwrite=new FileStream(candidate,FileMode.Open,FileAccess.Write,FileShare.ReadWrite|FileShare.Delete); throw new Exception("Download content was writable before verification"); }
+                catch(IOException) { locked=true; }
+            });
+            assert(locked&&File.ReadAllBytes(protectedPath).SequenceEqual(fixture.Bytes),"Installer stays exclusively held through digest verification"); File.Delete(protectedPath);
+        }
         var reports=new List<UpdateDownloadProgress>();
         var path = await updates.DownloadAsync(release!, "test-token", directory, CancellationToken.None,reports.Add);
         assert(reports.First().Stage=="download"&&reports.Last().Stage=="verify"&&reports.Last().ReceivedBytes==fixture.Bytes.Length&&reports.Last().TotalBytes==fixture.Bytes.Length,"Download progress reports exact byte count and separate verification stage");

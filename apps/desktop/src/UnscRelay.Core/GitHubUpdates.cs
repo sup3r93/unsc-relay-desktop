@@ -41,17 +41,22 @@ public sealed class GitHubUpdates(HttpMessageHandler? handler = null)
     }
     public async Task<string> DownloadAsync(UpdateRelease release, string token, string directory, CancellationToken cancellation, Action<UpdateDownloadProgress>? progress = null)
     {
-        if (Path.GetFileName(release.FileName) != release.FileName || !release.FileName.EndsWith(".exe")) throw new InvalidDataException("Nome installer non valido.");
-        Directory.CreateDirectory(directory); var path = Path.Combine(directory, Guid.NewGuid().ToString("N") + "-" + release.FileName);
+        if (!Version.TryParse(release.Version?.TrimStart('v'),out var version) || version.Build < 0 || release.AssetId <= 0 || release.FileName != $"UNSC-Relay-Setup-{version}.exe" || release.Sha256 is not { Length:64 } || !release.Sha256.All(Uri.IsHexDigit))
+            throw new InvalidDataException("Metadati installer non validi.");
+        directory=Path.GetFullPath(directory); FolderSync.CheckLocalParents(directory);
+        Directory.CreateDirectory(directory); FolderSync.CheckLocalParents(directory);
+        var path = Path.Combine(directory, Guid.NewGuid().ToString("N") + "-" + release.FileName); var created=false;
         try
         {
             using var client = Client(token); client.DefaultRequestHeaders.Accept.Clear(); client.DefaultRequestHeaders.Accept.ParseAdd("application/octet-stream");
             using var response = await client.GetAsync($"https://api.github.com/repos/{Repo}/releases/assets/{release.AssetId}", HttpCompletionOption.ResponseHeadersRead, cancellation);
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > 600 * 1024 * 1024) throw new InvalidDataException("Installer troppo grande.");
-            await using (var source = await response.Content.ReadAsStreamAsync(cancellation))
-            await using (var target = new FileStream(path, FileMode.CreateNew))
+            await using var source = await response.Content.ReadAsStreamAsync(cancellation);
+            FolderSync.CheckLocalParents(directory);
+            await using (var target = new FileStream(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
             {
+                created=true;
                 var buffer = new byte[65536]; long total = 0; int read;
                 var length = response.Content.Headers.ContentLength; var watch = System.Diagnostics.Stopwatch.StartNew(); var lastReport = TimeSpan.Zero;
                 progress?.Invoke(new(0, length, 0, null, "download"));
@@ -64,11 +69,13 @@ public sealed class GitHubUpdates(HttpMessageHandler? handler = null)
                 }
                 if (length.HasValue && total != length.Value) throw new InvalidDataException("Download incompleto.");
                 progress?.Invoke(new(total, length ?? total, 0, null, "verify"));
+                await target.FlushAsync(cancellation); target.Position=0;
+                var digest = await SHA256.HashDataAsync(target, cancellation);
+                if (!CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString(release.Sha256))) throw new CryptographicException("Integrità installer non valida.");
+                FolderSync.CheckLocalParents(directory);
             }
-            await using var check = File.OpenRead(path); var digest = await SHA256.HashDataAsync(check, cancellation);
-            if (!CryptographicOperations.FixedTimeEquals(digest, Convert.FromHexString(release.Sha256))) throw new CryptographicException("Integrità installer non valida.");
             return path;
         }
-        catch { if (File.Exists(path)) File.Delete(path); throw; }
+        catch { if(created)try{FolderSync.CheckLocalParents(directory);if(File.Exists(path))File.Delete(path);}catch(IOException){ /* Preserve files rather than follow a redirected cleanup path. */ } throw; }
     }
 }
