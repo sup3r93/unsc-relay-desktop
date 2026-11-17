@@ -12,7 +12,7 @@ public partial class MainWindow
     readonly SemaphoreSlim cloudGate=new(1,1);
     readonly CancellationTokenSource cloudLifetime=new();
     readonly DispatcherTimer cloudTimer=new(){Interval=TimeSpan.FromSeconds(30)};
-    bool cloudConflict, cloudUiBusy, cloudRunning, accountLoggingOut;
+    bool cloudConflict, cloudUiBusy, cloudRunning, accountLoggingOut, cloudPersonalRecovery;
     DateTimeOffset? cloudLastVerified;
     string cloudMessage="Collega l’account UNSC per attivare questo dispositivo.";
     bool AccountLocked=>accountLoggingOut||(!smokeTest&&!cloud.State.Activated);
@@ -20,11 +20,11 @@ public partial class MainWindow
     {
         cloud=new(dataPath);
         cloudMessage=cloud.State.Activated?"Copia locale disponibile. La sincronizzazione riprende dopo lo sblocco.":cloudMessage;
-        cloudTimer.Tick+=async(_,_)=>{if(!smokeTest&&consoleReady&&!closing&&!updating&&!cloudUiBusy&&activeOperations==0)await SynchronizeCloud();};
+        cloudTimer.Tick+=async(_,_)=>{if(!CriticalUpdateRequired&&!smokeTest&&consoleReady&&!closing&&!updating&&!cloudUiBusy&&activeOperations==0)await SynchronizeCloud();};
         if(!smokeTest)cloudTimer.Start();
     }
-    object CloudStatus()=>new {requiresLink=AccountLocked,linked=cloud.State.Activated,name=cloud.State.Name,
-        ready=cloud.State.Migrated&&cloud.State.Header!=null,revision=cloud.State.Revision,online=cloudLastVerified>DateTimeOffset.UtcNow.AddSeconds(-90),lastVerified=cloudLastVerified,conflict=cloudConflict,busy=cloudRunning,message=cloudMessage};
+    object CloudStatus()=>new {requiresLink=AccountLocked,linked=cloud.State.Activated,name=cloud.State.Name,email=CloudAccountClient.RememberedEmail(cloud.State),
+        owner=cloud.State.Owner,ready=cloud.State.Migrated&&cloud.State.Header!=null,revision=cloud.State.Revision,online=cloudLastVerified>DateTimeOffset.UtcNow.AddSeconds(-90),lastVerified=cloudLastVerified,conflict=cloudConflict,personalRecovery=cloudPersonalRecovery,busy=cloudRunning,message=cloudMessage};
     void CloudNotify(string message){cloudMessage=message;Emit("account",CloudStatus());}
     static SyncEnvelope HeaderOnly(SyncEnvelope value)=>value with{Iv=Convert.ToBase64String(new byte[12]),Ciphertext=Convert.ToBase64String(new byte[16])};
     void Checkpoint(long revision,string hash,SyncEnvelope envelope)
@@ -34,7 +34,7 @@ public partial class MainWindow
     void PreserveRemote(RemoteVault remote)
     {
         var directory=Path.Combine(dataPath,"SyncConflicts");Directory.CreateDirectory(directory);
-        var path=Path.Combine(directory,cloud.State.Owner+"-r"+remote.Revision+".json");
+        var path=Path.Combine(directory,cloud.SyncOwner+"-r"+remote.Revision+".json");
         if(!File.Exists(path))AtomicFile.Write(path,JsonSerializer.SerializeToUtf8Bytes(remote,VaultSyncCrypto.Json));
     }
     void ApplyCloud(byte[] bytes,RemoteVault remote)
@@ -67,13 +67,13 @@ public partial class MainWindow
             await cloud.VerifyOnline(cloudLifetime.Token);cloudLastVerified=DateTimeOffset.UtcNow;
             if(!vault.IsUnlocked){CloudNotify("Archivio locale bloccato. Le modifiche saranno sincronizzate dopo lo sblocco.");return;}
             if(!cloud.State.Migrated||cloud.State.Header==null){CloudNotify("Completa la migrazione dell’archivio nelle impostazioni Account e sincronizzazione.");return;}
-            key=vault.SyncKey(cloud.State.Owner);
+            key=vault.SyncKey(cloud.SyncOwner);
             if(key==null){CloudNotify("Sblocca l’archivio online con la sua password per collegare questo archivio locale.");return;}
             local=VaultSyncCrypto.Capture(vault,data,hosts.List());var localHash=VaultSyncCrypto.Hash(local);
             var remote=await cloud.Read(cloudLifetime.Token);
-            if(remote==null)throw new OnlineAccessException("L’archivio online non è disponibile. La copia locale è conservata; non verrà sostituita automaticamente.");
+            if(remote==null){cloudPersonalRecovery=true;throw new OnlineAccessException("L’archivio personale online è vuoto o è stato isolato per sicurezza. La copia locale è conservata. Apri Account e sincronizzazione → Ripristina sincronizzazione dalla copia locale verificata.");}
             if(remote.Revision<cloud.State.Revision)throw new OnlineAccessException("La revisione online è precedente all’ultima verificata. Sincronizzazione sospesa per proteggere i dati.");
-            var decrypted=await Task.Run(()=>VaultSyncCrypto.Open(remote.Envelope,cloud.State.Owner,key));
+            var decrypted=await Task.Run(()=>VaultSyncCrypto.Open(remote.Envelope,cloud.SyncOwner,key));
             try{remotePlain=VaultSyncCrypto.Canonicalize(decrypted);}finally{CryptographicOperations.ZeroMemory(decrypted);}
             // User edits made while the network request was pending must never be overwritten.
             var current=VaultSyncCrypto.Capture(vault,data,hosts.List());
@@ -98,6 +98,7 @@ public partial class MainWindow
             if(next==null){cloudConflict=true;CloudNotify("L’archivio è cambiato durante il salvataggio. Nessuna copia è stata sovrascritta. Riprova.");return;}
             Checkpoint(next.Value,localHash,encrypted);CloudNotify("Modifiche salvate online · "+DateTime.Now.ToString("HH:mm"));
         }catch(Exception ex) when(ex is HttpRequestException or TaskCanceledException or OnlineAccessException or IOException or CryptographicException or InvalidDataException or JsonException or InvalidOperationException or ArgumentException){
+            if(ex is PersonalArchiveChangedException)cloudPersonalRecovery=true;
             CloudNotify(ex is OnlineAccessException?ex.Message:ex is CryptographicException?"La chiave online è cambiata: apri le impostazioni e inserisci la password dell’archivio online. La copia locale è conservata.":"Non riesco a sincronizzare adesso. Puoi lavorare offline: riproverò automaticamente.");
         }finally{
             if(key!=null)CryptographicOperations.ZeroMemory(key);if(local!=null)CryptographicOperations.ZeroMemory(local);if(remotePlain!=null)CryptographicOperations.ZeroMemory(remotePlain);
@@ -112,12 +113,16 @@ public partial class MainWindow
         if(action=="accountSite"){Process.Start(new ProcessStartInfo("https://unsc.responda.eu/console"){UseShellExecute=true});return null;}
         if(!await cloudGate.WaitAsync(0))throw new InvalidOperationException("Attendi il completamento della sincronizzazione.");
         try {
+            if(action.StartsWith("archive",StringComparison.Ordinal))return await ArchiveAction(action,p);
             if(action=="accountLogin"||action=="accountRegister"||action=="accountSecurity"){
                 if(startupSequencePlaying)throw new InvalidOperationException("Attendi la sequenza iniziale.");
                 var accountAction=action=="accountRegister"?"register":action=="accountSecurity"?S(p,"action"):"login";
                 var generation=authenticationGeneration;
+                var remembered=new AccountWorkspaces(rootDataPath).Load();var binding=remembered.Accounts.SingleOrDefault(a=>a.Id==remembered.Active);
+                if(cloud.State.Owner.Length==0&&binding is {Owner.Length:64})cloud.State.Owner=binding.Owner;
                 await cloud.LoginAsync(cloudLifetime.Token,new InAppAccountBrowser(this,dataPath),accountAction);
                 if(accountAction is "login" or "register")await UnlockOnlineAfterLogin(generation);
+                new AccountWorkspaces(rootDataPath).Remember(cloud.State);
                 cloudLastVerified=DateTimeOffset.UtcNow;CloudNotify("Account verificato per "+cloud.State.Name+". Windows Hello offline è disponibile solo dopo abilitazione manuale.");return AccessBootstrap();
             }
             if(action=="accountProfile")return await cloud.Profile(cloudLifetime.Token);
@@ -125,7 +130,7 @@ public partial class MainWindow
                 if(activeOperations>1||transferActive||QueueBusy||EditorsBusy||ExportBusy||helloBusy||certificateRenewBusy||connectingSessions.Count>0)throw new InvalidOperationException("Completa o metti in pausa le operazioni in corso prima di uscire.");
                 if(!Confirm("Uscire dall’account dell’app? Le sessioni remote saranno chiuse e l’archivio verrà bloccato. I dati cifrati restano su questo PC; le modifiche non salvate negli editor saranno scartate."))return Snapshot();
                 accountLoggingOut=true;
-                try{await CloseAllLocal();foreach(var editor in editBuffers.Keys.ToArray())CloseEditor(editor);
+                try{await CloseAllStorage();await CloseAllLocal();foreach(var editor in editBuffers.Keys.ToArray())CloseEditor(editor);
                 foreach(var session in desktopSessions.Keys.ToArray())DisconnectDesktop(session);
                 foreach(var session in sessions.Keys.ToArray())await DisconnectWithHooks(session,false);
                 CloseDetachedWindows();StopAllRecordings();StopBundledAgent();vault.Lock();connectionPasswords.Clear();connectionPassphrases.Clear();assistantOutput.Clear();
@@ -136,6 +141,21 @@ public partial class MainWindow
             if(action=="accountSetup"){
                 if(AccountLocked||!vault.IsUnlocked)throw new InvalidOperationException("Accedi al sito e sblocca prima l’archivio locale.");
                 var password=S(p,"password");if(password.Length is <12 or >4096)throw new ArgumentException("Usa la password dell’archivio online (almeno 12 caratteri).");
+                var recover=p.TryGetProperty("recoverPersonal",out var recoverValue)&&recoverValue.GetBoolean();
+                if(recover)
+                {
+                    if(!p.TryGetProperty("reviewedLocal",out var reviewed)||!reviewed.GetBoolean())throw new InvalidOperationException("Verifica prima la copia locale o ripristinala da un backup attendibile.");
+                    VaultPasswordPolicy.ValidateCreation(password,S(p,"confirmation"));
+                    if(!Confirm("Ripristinare la sincronizzazione usando esclusivamente la copia locale che hai verificato? Nessun dato verrà importato dal vecchio archivio condiviso. Verrà creata una copia di recupero e sarà richiesta una nuova autenticazione con 2FA."))return Snapshot();
+                    await cloud.LoginAsync(cloudLifetime.Token);var personal=await cloud.PersonalArchive(cloudLifetime.Token);
+                    SyncLocalBackup.Create(dataPath,false);var local=VaultSyncCrypto.Capture(vault,data,hosts.List());
+                    try{await PersonalArchiveRecovery.Commit(cloud.State,personal,password,local,()=>cloud.ReadArchive(personal,cloudLifetime.Token),value=>cloud.WriteArchive(personal,value,0,cloudLifetime.Token),(owner,bytes)=>vault.StoreSyncKey(owner,bytes),cloud.Save);}
+                    catch(CryptographicException){throw new InvalidOperationException("Codice di recupero errato o copia online non integra. Nessuna copia è stata sovrascritta.");}
+                    finally{CryptographicOperations.ZeroMemory(local);}
+                    cloudPersonalRecovery=false;cloudConflict=false;CloudNotify("Sincronizzazione personale ripristinata dalla copia locale verificata. Il vecchio archivio è conservato.");return Snapshot();
+                }
+                var targetPersonal=await cloud.PersonalArchive(cloudLifetime.Token);
+                if(targetPersonal.ArchiveOwner!=cloud.SyncOwner){cloudPersonalRecovery=true;throw new InvalidOperationException("L’archivio personale è cambiato. Usa Ripristina sincronizzazione dalla copia locale verificata; i dati esistenti sono conservati.");}
                 var remote=await cloud.Read(cloudLifetime.Token);
                 if(remote==null)VaultPasswordPolicy.ValidateCreation(password,S(p,"confirmation"));
                 byte[]? key=null,plain=null;
@@ -143,17 +163,17 @@ public partial class MainWindow
                 try {
                     if(remote==null){
                         key=RandomNumberGenerator.GetBytes(32);plain=VaultSyncCrypto.Capture(vault,data,hosts.List());
-                        var envelope=await Task.Run(()=>VaultSyncCrypto.Create(cloud.State.Owner,password,key,plain));
+                        var envelope=await Task.Run(()=>VaultSyncCrypto.Create(cloud.SyncOwner,password,key,plain));
                         cloud.State.Revision=0;
                         var revision=await cloud.Write(envelope,cloudLifetime.Token);
                         if(revision==null)throw new OnlineAccessException("Un altro dispositivo ha creato l’archivio. Riprova con la password di quell’archivio; i dati locali sono conservati.");
-                        vault.StoreSyncKey(cloud.State.Owner,key);Checkpoint(revision.Value,VaultSyncCrypto.Hash(plain),envelope);
-                        CloudNotify("Migrazione completata. Archivio, profili, cartelle e rubrica sono cifrati online. La copia locale è conservata.");
+                        vault.StoreSyncKey(cloud.SyncOwner,key);Checkpoint(revision.Value,VaultSyncCrypto.Hash(plain),envelope);
+                        cloudPersonalRecovery=false;CloudNotify("Migrazione completata. Archivio, profili, cartelle e rubrica sono cifrati online. La copia locale è conservata.");
                     }else{
-                        key=await Task.Run(()=>VaultSyncCrypto.UnlockKey(remote.Envelope,cloud.State.Owner,password));
-                        var decrypted=await Task.Run(()=>VaultSyncCrypto.Open(remote.Envelope,cloud.State.Owner,key));
+                        key=await Task.Run(()=>VaultSyncCrypto.UnlockKey(remote.Envelope,cloud.SyncOwner,password));
+                        var decrypted=await Task.Run(()=>VaultSyncCrypto.Open(remote.Envelope,cloud.SyncOwner,key));
                         try{plain=VaultSyncCrypto.Canonicalize(decrypted);}finally{CryptographicOperations.ZeroMemory(decrypted);}
-                        vault.StoreSyncKey(cloud.State.Owner,key);cloud.State.Header=HeaderOnly(remote.Envelope);cloud.State.Migrated=true;cloud.State.Baseline="";cloud.Save();
+                        vault.StoreSyncKey(cloud.SyncOwner,key);cloud.State.Header=HeaderOnly(remote.Envelope);cloud.State.Migrated=true;cloud.State.Baseline="";cloud.Save();
                         var records=vault.ExportSyncRecords();bool empty;
                         try{using var doc=JsonDocument.Parse(records);empty=doc.RootElement.GetArrayLength()==0&&data.Profiles.Count==0&&data.Snippets.Count==0&&data.Machines.Count==0&&data.Workspaces.Count==0;}finally{CryptographicOperations.ZeroMemory(records);}
                         if(empty)ApplyCloud(plain,remote);else await SynchronizeCloud(entered:true);

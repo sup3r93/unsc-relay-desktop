@@ -1,4 +1,4 @@
-param([string]$Version = '0.2.18', [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{40}$')][string]$Thumbprint, [switch]$AllowUntrusted, [switch]$PackageOnly)
+param([string]$Version = '0.2.19', [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{40}$')][string]$Thumbprint, [switch]$AllowUntrusted, [switch]$PackageOnly)
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 Push-Location $repositoryPath
@@ -18,7 +18,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Test migrazione e sincronizzazione falliti.' }
         & ./tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.exe --native-certificates-only
         if ($LASTEXITCODE -ne 0) { throw 'Test certificati OpenSSH falliti.' }
-        foreach ($taskMode in @('--security-review','--account-transport','--update-workflow-only')) {
+        foreach ($taskMode in @('--local-data-files','--security-review','--account-transport','--update-workflow-only','--update-policy','--personal-archive-recovery','--archive-sharing','--archive-client','--account-workspaces')) {
             & ./tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.exe $taskMode
             if ($LASTEXITCODE -ne 0) { throw ('Test pre-pacchetto fallito: '+$taskMode) }
         }

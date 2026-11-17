@@ -115,6 +115,18 @@ public partial class MainWindow
                 checks["updateClosesAllSessionsWithSingleConfirmation"]=closed&&confirmations==2&&sessions.Count==0&&localSessions.Count==0&&desktopSessions.Count==0;
 
             }
+            var criticalTrace=Path.Combine(dataPath,"critical-hook-must-not-run.txt");
+            var criticalProfile=new ConnectionProfile{Name="Critical fixture",Host="127.0.0.1",Username="fixture",Hooks=[new("after-disconnect","local","cmd.exe",["/c","echo unsafe > "+criticalTrace],true)]};
+            var criticalLocal=Guid.NewGuid().ToString("N");await ConnectLocal(new(){Name="Critical local",Protocol="local"},criticalLocal,JsonSerializer.SerializeToElement(new{cols=80,rows=24}));
+            requiredUpdatePolicy=new("9.9.9",new string('A',64),["security"],"critical","9.9.9");
+            await RunHooks(criticalProfile,"after-disconnect");
+            hookedSessions["critical-ended"]=criticalProfile;SessionEnded("critical-ended");
+            await Dispatcher.InvokeAsync(()=>{},System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            checks["criticalBlocksDisconnectCallbacksWithoutRunningHooks"]=!File.Exists(criticalTrace);
+            try{await Execute("openData",empty);checks["criticalBlocksNativeRpc"]=false;}catch(InvalidOperationException){checks["criticalBlocksNativeRpc"]=true;}
+            try{await ConnectLocal(new(){Name="Denied critical local",Protocol="local"},Guid.NewGuid().ToString("N"),empty);checks["criticalBlocksNewLocalProcesses"]=false;}catch(OperationCanceledException){checks["criticalBlocksNewLocalProcesses"]=true;}
+            await StopCriticalSessions();checks["criticalStopsExistingLocalSessionsWithoutHooks"]=localSessions.Count==0&&sessions.Count==0&&!File.Exists(criticalTrace);
+            requiredUpdatePolicy=null;
             File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"access-smoke-result.json"),JsonSerializer.Serialize(new{success=checks.Values.All(x=>x),checks},ProfileStore.Json));
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"access-smoke-result.json"),JsonSerializer.Serialize(new{success=false,error=ex.ToString(),checks},ProfileStore.Json));}
         finally{foreach(var session in sessions.Values)session.Dispose();sessions.Clear();exitAllowed=true;Browser.Dispose();Close();}

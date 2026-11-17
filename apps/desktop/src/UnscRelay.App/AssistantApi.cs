@@ -38,7 +38,7 @@ public partial class MainWindow
     }
     void RequireAssistantAccess(CancellationToken token)
     {
-        token.ThrowIfCancellationRequested();if(closing||updating||AppLocked||AccountLocked||startupSequencePlaying||!consoleReady||!data.Settings.AssistantApiEnabled)throw new InvalidOperationException("API non attiva o console bloccata.");
+        token.ThrowIfCancellationRequested();if(CriticalUpdateRequired||closing||updating||AppLocked||AccountLocked||startupSequencePlaying||!consoleReady||!data.Settings.AssistantApiEnabled)throw new InvalidOperationException("API non attiva o console bloccata.");
     }
     async Task<object?> ApproveAssistant(string tool,JsonElement args,CancellationToken token)
     {

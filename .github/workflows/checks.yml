@@ -54,6 +54,13 @@ jobs:
         run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --native-recovery
       - name: Check account transport and offline policy
         run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --account-transport
+      - name: Check account workspaces, archive recovery and signed update policy
+        shell: pwsh
+        run: |
+          foreach ($mode in @('--local-data-files','--account-workspaces','--archive-sharing','--archive-client','--personal-archive-recovery','--update-policy')) {
+            dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll $mode
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Check account unlock when implemented
         shell: pwsh
         run: |

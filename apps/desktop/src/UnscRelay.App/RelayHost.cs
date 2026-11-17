@@ -28,7 +28,8 @@ public partial class MainWindow
     static readonly bool shutdownSmokeTest = Environment.GetCommandLineArgs().Contains("--update-shutdown-smoke-test");
     static readonly bool sequenceSmokeTest = Environment.GetCommandLineArgs().Contains("--sequence-smoke-test");
     static readonly bool smokeTest = accountBrowserSmokeTest || accessSmokeTest || recoverySmokeTest || nativeIntegrationSmokeTest || nativePackSmokeTest || localSessionsSmokeTest || windowExplorerSmokeTest || configLogsSmokeTest || conversionSmokeTest || presentationSmokeTest || presentationPreview || sequenceSmokeTest || filesSmokeTest || desktopSmokeTest || shutdownSmokeTest || Environment.GetCommandLineArgs().Contains("--smoke-test");
-    readonly string dataPath = smokeTest ? Path.Combine(AppContext.BaseDirectory, ".smoke-data",accountBrowserSmokeTest?"AccountBrowser":accessSmokeTest?"Access-"+Guid.NewGuid().ToString("N"):recoverySmokeTest?"Recovery":nativeIntegrationSmokeTest?"NativeIntegration":localSessionsSmokeTest?"LocalSessions":sequenceSmokeTest?"Sequences":configLogsSmokeTest?"ConfigLogs":windowExplorerSmokeTest?"WindowExplorer":desktopSmokeTest?"Desktop":"") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UNSC Relay");
+    readonly string rootDataPath = smokeTest ? Path.Combine(AppContext.BaseDirectory, ".smoke-data",accountBrowserSmokeTest?"AccountBrowser":accessSmokeTest?"Access-"+Guid.NewGuid().ToString("N"):recoverySmokeTest?"Recovery":nativeIntegrationSmokeTest?"NativeIntegration":localSessionsSmokeTest?"LocalSessions":sequenceSmokeTest?"Sequences":configLogsSmokeTest?"ConfigLogs":windowExplorerSmokeTest?"WindowExplorer":desktopSmokeTest?"Desktop":"") : LocalDataFiles.ApplicationRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    string dataPath=null!;
     ProfileStore store = null!; KeyVault vault = null!; HostKeyStore hosts = null!; AppData data = null!;
     bool keyGenerationBusy;
     readonly Dictionary<string, SshSession> sessions = [];
@@ -42,12 +43,14 @@ public partial class MainWindow
     static Version CurrentVersion { get { var v = typeof(MainWindow).Assembly.GetName().Version!; return new Version(v.Major, v.Minor, v.Build); } }
     void InitializeRelay()
     {
+        dataPath=new AccountWorkspaces(rootDataPath).ActiveDirectory();Directory.CreateDirectory(dataPath);FolderSync.CheckLocalParents(dataPath);
         SyncLocalBackup.Recover(dataPath);
-        store = new(dataPath); vault = new(Path.Combine(dataPath, "keys.vault")); hosts = new(Path.Combine(dataPath, "hostkeys.json")); data = store.Load(); updateTokens = new(dataPath); InitializeEditorPreference();
+        store = new(dataPath); vault = new(Path.Combine(dataPath, "keys.vault")); hosts = new(Path.Combine(dataPath, "hostkeys.json")); data = store.Load(); updateTokens = new(rootDataPath); InitializeEditorPreference();
         foreach (var folder in data.Profiles.Select(p => p.Folder).ToArray()) FolderCatalog.Add(data, folder.Length == 0 ? "Connessioni" : folder);
         try{ExplorerExport.Prune(Path.Combine(dataPath,"DragExports"),DateTime.UtcNow);}catch(IOException){}catch(UnauthorizedAccessException){}
         LoadFileQueue();InitializeRecordingRetention();InitializeKeyConversion();
         InitializeCloud();
+        InitializeBackgroundLifecycle();
         InitializeAssistantApi();
         if(smokeTest&&!sequenceSmokeTest){StartupCover.Visibility=System.Windows.Visibility.Collapsed;Browser.Visibility=System.Windows.Visibility.Visible;consoleReady=true;}
         if(sequenceSmokeTest)data.Settings=data.Settings with{StartupVolume=.23,ShutdownVolume=.61};
@@ -55,7 +58,7 @@ public partial class MainWindow
         if (smokeTest) data.Settings = data.Settings with { StartupVideo = false, ShutdownVideo = false };
         Loaded += async (_, _) => await InitializeBrowser(); Closing += OnRelayClosing;
         Microsoft.Win32.SystemEvents.SessionSwitch += OnWindowsSessionSwitch;Closed += (_,_) => Microsoft.Win32.SystemEvents.SessionSwitch -= OnWindowsSessionSwitch;
-        lockTimer.Tick += (_, _) => { RenewExternalCertificates(); if (!helloBusy && vault.IsUnlocked && DateTime.UtcNow - vault.LastAccessUtc > TimeSpan.FromMinutes(data.Settings.AutoLockMinutes)) { StopAllRecordings(); StopBundledAgent(); vault.Lock(); Emit("vault", new { unlocked = false }); } }; lockTimer.Start();
+        lockTimer.Tick += (_, _) => { if(!CriticalUpdateRequired)RenewExternalCertificates(); if (!helloBusy && vault.IsUnlocked && DateTime.UtcNow - vault.LastAccessUtc > TimeSpan.FromMinutes(data.Settings.AutoLockMinutes)) { StopAllRecordings(); StopBundledAgent(); vault.Lock(); Emit("vault", new { unlocked = false }); } }; lockTimer.Start();
     }
     async Task InitializeBrowser()
     {
@@ -72,6 +75,7 @@ public partial class MainWindow
             core.NavigationCompleted += (_, e) => { if(e.IsSuccess){ Browser.Visibility=System.Windows.Visibility.Visible; StartupCover.Visibility=System.Windows.Visibility.Collapsed; } };
             core.WebMessageReceived += OnRelayMessage; core.Navigate(Origin + "/index.html");
             if (smokeTest) _ = WatchSmokeAsync();
+            else _ = CheckBackgroundUpdates(true);
         }
         catch (Exception ex) { MessageBox.Show("Avvio interfaccia non riuscito. Verifica WebView2 Runtime.\n" + ex.Message, "UNSC Relay"); exitAllowed = true; Close(); }
     }
@@ -91,7 +95,7 @@ public partial class MainWindow
     static string S(JsonElement p, string k, string fallback = "") => p.TryGetProperty(k, out var v) ? v.GetString() ?? fallback : fallback;
     static int I(JsonElement p, string k, int fallback) => p.TryGetProperty(k, out var v) && v.TryGetInt32(out var n) ? n : fallback;
     SshSession Session(JsonElement p) => sessions.TryGetValue(S(p, "sessionId"), out var s) ? s : throw new InvalidOperationException("Sessione non disponibile.");
-    object Snapshot() => new { account=CloudStatus(), data, vault = new { exists = vault.Exists, unlocked = vault.IsUnlocked, keys = vault.IsUnlocked ? vault.List() : [], passwords = vault.IsUnlocked ? vault.Passwords() : [], revocations = vault.IsUnlocked ? vault.Revocations() : [], windowsHello = AccountHelloAllowed() }, hostKeys = hosts.List(), version = CurrentVersion.ToString(), dataPath, diagnostic = smokeTest&&!sequenceSmokeTest };
+    object Snapshot() => new { account=CloudStatus(), data, vault = new { exists = vault.Exists, unlocked = vault.IsUnlocked, keys = vault.IsUnlocked ? vault.List() : [], passwords = vault.IsUnlocked ? vault.Passwords() : [], revocations = vault.IsUnlocked ? vault.Revocations() : [], windowsHello = AccountHelloAllowed() }, hostKeys = hosts.List(), version = CurrentVersion.ToString(), dataPath, criticalUpdateRequired=CriticalUpdateRequired, diagnostic = smokeTest&&!sequenceSmokeTest };
     async void OnRelayMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         if (!e.Source.StartsWith(Origin + "/", StringComparison.Ordinal)) return; string? id = null;
@@ -107,7 +111,7 @@ public partial class MainWindow
                 object? result;
                 if (action == "dropPaths")
                 {
-                    if (updating||AccountLocked||AppLocked) throw new IOException("Attendi l’aggiornamento o autentica l’accesso.");
+                    if (CriticalUpdateRequired||updating||AccountLocked||AppLocked) throw new IOException("Attendi l’aggiornamento o autentica l’accesso.");
                     var files = e.AdditionalObjects.OfType<CoreWebView2File>().Select(f => f.Path).Where(path => !string.IsNullOrWhiteSpace(path)).ToArray();
                     if (files.Length is < 1 or > 1000) throw new IOException("Trascina da 1 a 1000 elementi da Esplora file.");
                     result = new { paths = files };
@@ -121,14 +125,17 @@ public partial class MainWindow
     }
     async Task<object?> Execute(string action, JsonElement p)
     {
+        if(CriticalUpdateRequired && action is not("cancelTransfer" or "storageCancel" or "folderCancel" or "filePause" or "fileDiscard" or "conversionCancel" or "recordingStop" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationExit" or "exit" or "checkUpdates" or "installUpdate" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "activateMain"))throw new InvalidOperationException("È richiesto un aggiornamento di sicurezza critico. Apri Aggiornamenti per installarlo.");
         if (updating && action != "bootstrap") throw new InvalidOperationException("Attendi la fine dell’aggiornamento.");
-        if((AppLocked||AccountLocked) && action is not("accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
+        if((AppLocked||AccountLocked) && action is not("workspaceList" or "workspaceSwitch" or "workspaceAdd" or "workspaceForget" or "accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
         switch (action)
         {
+            case "workspaceList": case "workspaceSwitch": case "workspaceAdd": case "workspaceForget": return await WorkspaceAccountAction(action,p);
             case "nativeFilesOpen": return await OpenNativeFileWorkspace(p);
             case "storageNativeOpen": case "storageOpen": case "storageList": case "storageTransfer": case "storageCompare": case "storageChange": case "storageCancel": return await StorageAction(action,p);
             case "diagnosticPreview": return DiagnosticReport();
             case "diagnosticExport": return ExportDiagnostic();
+            case "archiveList": case "archiveLocalList": case "archivePrepare": case "archiveCreate": case "archiveRead": case "archiveRecover": case "archiveMembers": case "archiveRename": case "archiveRevoke": case "archiveAuthorize": case "archiveShare": case "archiveTransfer": case "archiveCopySecret": case "archiveUpdateRecord": case "archiveAddPassword": case "archiveDeleteRecord": case "archivePublish": case "archiveExport":
             case "accountAvailability": case "accountRegister": case "accountSecurity": case "accountProfile": case "accountLogout": case "accountLogin": case "accountStatus": case "accountSite": case "accountSetup": case "accountSync": case "accountUiBusy": return await CloudAction(action,p);
             case "fileLocation": case "localList": case "localChoose": case "sftpDirectory": case "sftpHome": case "fileCompare": case "sftpOperation":
             case "folderCompare": case "folderSync": case "folderCancel": case "filePlan": case "fileParallelism": case "fileEnqueue": case "fileQueue": case "fileClear": case "filePause": case "fileResume": case "fileDiscard":
@@ -192,9 +199,12 @@ public partial class MainWindow
             case "openNotepadWebsite": Process.Start(new ProcessStartInfo("https://notepad-plus-plus.org/"){UseShellExecute=true});return null;
             case "editorResetProgram":
                 var oldEditorSettings=data.Settings;data.Settings=data.Settings with{ExternalEditor="",EditorPreference="notepad"};try{store.Save(data);}catch{data.Settings=oldEditorSettings;throw;}return Snapshot();
+            case "lifecycleSettings":
+                var previousLifecycle=data.Settings;data.Settings=data.Settings with { CloseToTray=p.GetProperty("closeToTray").GetBoolean(), CheckUpdatesOnStartup=p.GetProperty("checkUpdatesOnStartup").GetBoolean(), CheckUpdatesDaily=p.GetProperty("checkUpdatesDaily").GetBoolean() };
+                try{store.Save(data);}catch{data.Settings=previousLifecycle;throw;}return Snapshot();
             case "settings":
                 var settings = p.Deserialize<UserSettings>(ProfileStore.Json) ?? new();
-                data.Settings = SequencePolicy.Apply(settings with { AutoLockMinutes = Math.Clamp(I(p, "autoLockMinutes", 10), 1, 120), StartupVolume=data.Settings.StartupVolume, ShutdownVolume=data.Settings.ShutdownVolume, RecordingRetentionDays = data.Settings.RecordingRetentionDays, RequireAppAuthentication=data.Settings.RequireAppAuthentication, AssistantApiEnabled=data.Settings.AssistantApiEnabled, AppMusicEnabled=data.Settings.AppMusicEnabled, AppMusicVolume=data.Settings.AppMusicVolume, ExternalEditor=data.Settings.ExternalEditor, EditorPreference=data.Settings.EditorPreference }); store.Save(data); return Snapshot();
+                data.Settings = SequencePolicy.Apply(settings with { AutoLockMinutes = Math.Clamp(I(p, "autoLockMinutes", 10), 1, 120), StartupVolume=data.Settings.StartupVolume, ShutdownVolume=data.Settings.ShutdownVolume, RecordingRetentionDays = data.Settings.RecordingRetentionDays, RequireAppAuthentication=data.Settings.RequireAppAuthentication, AssistantApiEnabled=data.Settings.AssistantApiEnabled, AppMusicEnabled=data.Settings.AppMusicEnabled, AppMusicVolume=data.Settings.AppMusicVolume, ExternalEditor=data.Settings.ExternalEditor, EditorPreference=data.Settings.EditorPreference, CloseToTray=data.Settings.CloseToTray, CheckUpdatesOnStartup=data.Settings.CheckUpdatesOnStartup, CheckUpdatesDaily=data.Settings.CheckUpdatesDaily }); store.Save(data); return Snapshot();
             case "vaultUnlock":
                 if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello.");
                 return await CloudAction("accountLogin",p);
@@ -309,9 +319,11 @@ public partial class MainWindow
                     if (selected.Protocol is "rdp" or "vnc") return await ConnectDesktop(selected, sid);
                     if(!automatic)await RunHooks(selected,"before-connect",required:true);
                     var session = await SshRoutes.CreateAsync(selected, data.Profiles, (profile, endpointHost, endpointPort) => CreateAuthenticatedSession(profile, endpointHost, endpointPort, profile.Id == selected.Id ? sid : Guid.NewGuid().ToString("N"), automatic));
+                    if(CriticalUpdateRequired){session.Dispose();throw new OperationCanceledException("Aggiornamento critico richiesto.");}
                     WireManagedSession(session); sessions.Add(session.Id, session);
-                    try { await Task.Run(() => session.ConnectAsync(I(p, "cols", 100), I(p, "rows", 30))); } catch { sessions.Remove(session.Id); sessionRouteSnapshots.Remove(session.Id); brokenSessions.Remove(session.Id); session.Dispose(); throw; }
+                    try { await Task.Run(() => session.ConnectAsync(I(p, "cols", 100), I(p, "rows", 30)));if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto."); } catch { sessions.Remove(session.Id); sessionRouteSnapshots.Remove(session.Id); brokenSessions.Remove(session.Id); session.Dispose(); throw; }
                     if(!automatic){hookedSessions[sid]=selected;await RunHooks(selected,"after-connect",session);await RunStartupMacro(session,startupMacro);}
+                    if(CriticalUpdateRequired){await DisconnectWithHooks(sid,false);throw new OperationCanceledException("Aggiornamento critico richiesto.");}
                     if (selected.Protocol == "sftp") RebindFileQueue(session.Profile.Id, session.Id);
                     return new { sessionId = session.Id, filesAvailable = session.FilesAvailable };
                 }
@@ -353,8 +365,10 @@ public partial class MainWindow
                 updateTokens.Delete(); updateToken = ""; update = null; return new { saved = false };
             case "checkUpdates":
                 if (updating) throw new InvalidOperationException("Aggiornamento già in corso.");
-                update = null; updateToken = updateTokens.Read(); update = await new GitHubUpdates().CheckAsync(updateToken, CurrentVersion, CancellationToken.None); return update;
+                return await CheckForUpdates();
             case "installUpdate":
+                if(criticalStopping)throw new InvalidOperationException("Attendi l’arresto sicuro delle sessioni prima di installare.");
+                if(checkingUpdates)throw new InvalidOperationException("Attendi la fine del controllo aggiornamenti.");
                 if (KeyConversionBusy) throw new InvalidOperationException("Termina o annulla la conversione delle chiavi prima di aggiornare.");
                 if (update == null) throw new InvalidOperationException("Controlla prima gli aggiornamenti.");
                 if (transferActive || QueueBusy || EditorsBusy || ExportBusy || helloBusy || certificateRenewBusy || connectingSessions.Count > 0 || activeOperations != 1) throw new InvalidOperationException("Completa i trasferimenti, le connessioni e le operazioni in corso prima di aggiornare.");
@@ -372,7 +386,7 @@ public partial class MainWindow
                     Emit("updateProgress", new { status = "Pronto per installare", stage = "ready" });
                     if (new UpdateConfirmation(this, update.Version, installRoot).ShowDialog() == true)
                     {
-                        store.Save(data); UpdateBackup.Create(dataPath, CurrentVersion.ToString());
+                        store.Save(data); UpdateBackup.Create(rootDataPath, CurrentVersion.ToString());
                         if (!File.Exists(Path.Combine(installRoot, "UNSC Relay.exe"))) throw new InvalidOperationException("Avvia l’aggiornamento dalla copia installata di UNSC Relay.");
                         var start = new ProcessStartInfo(installer) { UseShellExecute = false };
                         foreach (var argument in new[] { "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/RELAYUPDATE=1", "/DIR=" + installRoot, "/WAITFORPID=" + Environment.ProcessId }) start.ArgumentList.Add(argument);
@@ -383,13 +397,14 @@ public partial class MainWindow
                 }
                 finally { updating = false; Emit("updateProgress", new { status = "" }); }
             case "openData": Process.Start(new ProcessStartInfo("explorer.exe") { ArgumentList = { dataPath }, UseShellExecute = false }); return null;
-            case "exit": Close(); return null;
+            case "exit": explicitExit=true;Close(); return null;
             default: throw new ArgumentException("Azione non disponibile.");
         }
     }
     bool transferActive;
     async Task<SshSession> CreateAuthenticatedSession(ConnectionProfile profile, string? endpointHost, int endpointPort, string id, bool automatic = false)
     {
+        if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
         var method = profile.Authentication == "auto" ? profile.KeyId.Length > 0 ? "key" : "password" : profile.Authentication;
         var info = method == "key" ? vault.List().SingleOrDefault(k => k.Id == profile.KeyId) ?? throw new InvalidOperationException("La chiave assegnata a «" + profile.Name + "» non è disponibile. Sblocca l’archivio o modifica il profilo.") : null;
         if(info?.Kind=="ssh-native-key")throw new IOException("Questa chiave richiede una sessione OpenSSH nativa. Seleziona OpenSSH nella scelta del tipo di connessione.");
@@ -418,7 +433,8 @@ public partial class MainWindow
     }
     async void OnRelayClosing(object? sender, CancelEventArgs e)
     {
-        if (exitAllowed) return; e.Cancel = true; if (closing) return; if(certificateRenewBusy){MessageBox.Show(this,"Attendi la fine della richiesta di certificato.","UNSC Relay");return;}
+        if (exitAllowed) return; e.Cancel = true;
+        if(!explicitExit&&!updateClosing&&!smokeTest&&data.Settings.CloseToTray&&backgroundIcon!=null){Hide();return;} if (closing) return; if(certificateRenewBusy){MessageBox.Show(this,"Attendi la fine della richiesta di certificato.","UNSC Relay");return;}
         if(accessFinalWatch!=null&&!consoleReady&&accessFinalWatch.Elapsed.TotalSeconds<10)return;
         if(!updateClosing&&startupSequencePlaying&&startupSequenceWatch.Elapsed<TimeSpan.FromSeconds(20))return;
         if (updating && !updateClosing) { MessageBox.Show(this, "Attendi il completamento del download prima di chiudere.", "UNSC Relay"); return; }
@@ -434,12 +450,13 @@ public partial class MainWindow
         closing = true; assistantStop.Cancel();
         try
         {
+            backgroundUpdateTimer.Stop();backgroundIcon?.Dispose();backgroundIcon=null;
             cloudTimer.Stop();cloudLifetime.Cancel();
             await CloseAllStorage();
-            await CloseAllLocal(!updateClosing);
+            await CloseAllLocal(!CriticalUpdateRequired&&!updateClosing);
             foreach (var id in editBuffers.Keys.ToArray()) CloseEditor(id);
             foreach (var id in desktopSessions.Keys.ToArray()) DisconnectDesktop(id);
-            foreach(var id in sessions.Keys.ToArray())await DisconnectWithHooks(id,!updateClosing); sessions.Clear(); store.Save(data); StopAllRecordings(); StopBundledAgent(); vault.Lock(); updateToken = ""; lockTimer.Stop();
+            foreach(var id in sessions.Keys.ToArray())await DisconnectWithHooks(id,!CriticalUpdateRequired&&!updateClosing); sessions.Clear(); store.Save(data); StopAllRecordings(); StopBundledAgent(); vault.Lock(); updateToken = ""; lockTimer.Stop();
             connectionPasswords.Clear();
             connectionPassphrases.Clear();
             shutdownDone = new(TaskCreationOptions.RunContinuationsAsynchronously); shutdownSequenceWatch=Stopwatch.StartNew(); Emit("shutdown", new { enabled = !updateClosing, volume = data.Settings.ShutdownVolume });

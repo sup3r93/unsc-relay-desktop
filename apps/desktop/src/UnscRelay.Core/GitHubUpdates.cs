@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace UnscRelay.Core;
 public sealed record UpdateDownloadProgress(long ReceivedBytes, long? TotalBytes, double BytesPerSecond, double? RemainingSeconds, string Stage);
-public sealed record UpdateRelease(string Version, string Notes, long AssetId, string FileName, string Sha256);
+public sealed record UpdateRelease(string Version, string Notes, long AssetId, string FileName, string Sha256, UpdatePolicy? Policy=null, string SignedPolicy="");
 public sealed class GitHubUpdates(HttpMessageHandler? handler = null)
 {
     private const string Repo = "sup3r93/unsc-relay-desktop";
@@ -17,7 +17,7 @@ public sealed class GitHubUpdates(HttpMessageHandler? handler = null)
         if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return client;
     }
-    public async Task<UpdateRelease?> CheckAsync(string token, Version current, CancellationToken cancellation)
+    public async Task<UpdateRelease?> CheckAsync(string token, Version current, CancellationToken cancellation, string? publisherCertificatePath=null)
     {
         using var client = Client(token);
         using var response = await client.GetAsync($"https://api.github.com/repos/{Repo}/releases/latest", cancellation);
@@ -35,7 +35,24 @@ public sealed class GitHubUpdates(HttpMessageHandler? handler = null)
             if (name != $"UNSC-Relay-Setup-{version}.exe") continue;
             var digest = asset.TryGetProperty("digest", out var d) ? d.GetString() : null;
             if (digest is not { Length: 71 } || !digest.StartsWith("sha256:", StringComparison.Ordinal) || !digest[7..].All(Uri.IsHexDigit)) throw new InvalidDataException("Release senza digest SHA-256 valido: aggiornamento rifiutato.");
-            return new(tag, root.GetProperty("body").GetString() ?? "", asset.GetProperty("id").GetInt64(), name, digest[7..]);
+            UpdatePolicy? policy=null;var signedPolicy="";
+            if(publisherCertificatePath!=null)
+            {
+                var manifests=root.GetProperty("assets").EnumerateArray().Where(a=>a.GetProperty("name").GetString()=="UNSC-Relay-Update-Policy.json").ToArray();
+                if(manifests.Length>1)throw new InvalidDataException("Metadati aggiornamento duplicati.");
+                if(manifests.Length==1)
+                {
+                    var policyId=manifests[0].GetProperty("id").GetInt64();if(policyId<=0||manifests[0].GetProperty("size").GetInt64()>32768)throw new InvalidDataException("Metadati aggiornamento non validi.");
+                    client.DefaultRequestHeaders.Accept.Clear();client.DefaultRequestHeaders.Accept.ParseAdd("application/octet-stream");
+                    using var policyResponse=await client.GetAsync($"https://api.github.com/repos/{Repo}/releases/assets/{policyId}",HttpCompletionOption.ResponseHeadersRead,cancellation);policyResponse.EnsureSuccessStatusCode();
+                    await using var stream=await policyResponse.Content.ReadAsStreamAsync(cancellation);using var memory=new MemoryStream();var bytes=new byte[4096];int n;
+                    while((n=await stream.ReadAsync(bytes,cancellation))>0){if(memory.Length+n>32768)throw new InvalidDataException("Metadati aggiornamento troppo grandi.");memory.Write(bytes,0,n);}
+                    signedPolicy=System.Text.Encoding.UTF8.GetString(memory.ToArray());
+                    using var certificate=System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadCertificateFromFile(publisherCertificatePath);
+                    policy=UpdatePolicy.Verify(signedPolicy,certificate,tag,digest[7..]);
+                }
+            }
+            return new(tag, root.GetProperty("body").GetString() ?? "", asset.GetProperty("id").GetInt64(), name, digest[7..],policy,signedPolicy);
         }
         throw new InvalidOperationException("La release non contiene un installer Windows compatibile.");
     }

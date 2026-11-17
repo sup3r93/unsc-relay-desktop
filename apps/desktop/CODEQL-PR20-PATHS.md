@@ -1,0 +1,17 @@
+# PR 20: local metadata paths
+
+## English
+
+The eleven newly reported high-severity path findings were traced to the Windows LocalApplicationData lookup and the synthetic test temporary directory. This review does not classify all local input as trusted or dismiss any alert.
+
+The application now rejects an unresolved, relative or traversing data root instead of resolving it against the working directory. Metadata paths must remain descendants of their selected root, without linked ancestors or files. Token, remembered-account and signed-update-policy reads validate the actual Windows file handle, hold it without write/delete sharing and bound its length before reading. Update backups copy from verified source handles and calculate the digest on the same exclusively held destination handle. Test scratch directories use the platform atomic temporary-directory API.
+
+Verification on 18 November 2026: 20 local-data regressions, 40 security-review checks, 11 account-workspace checks, 20 update-policy checks and 49 update/workflow checks passed. App and test builds completed without warnings or errors. A fresh CodeQL C# database analyzed with the unchanged path-injection query and the additional local threat model reported no finding in BackgroundLifecycle, RelayHost, LocalDataFiles, AccountWorkspaces, UpdateBackup or UpdateTokenStore. The wider local scan still reports existing findings elsewhere; this is not a clean-repository claim. GitHub's own scan remains the release gate. No query, language or security control was disabled, and no alert was dismissed. The responsive settings correction also keeps category labels readable at doubled text size; the browser test waits for the actual resized layout without increasing the 740px boundary.
+
+## Italiano
+
+Gli undici nuovi avvisi sui percorsi, classificati con gravità alta, sono stati ricondotti alla ricerca Windows di LocalApplicationData e alla cartella temporanea dei test sintetici. Questa analisi non considera automaticamente attendibile ogni dato locale e non archivia alcun avviso.
+
+L'applicazione rifiuta ora una radice dati non risolta, relativa o con attraversamenti di directory, senza ricavarla dalla cartella di lavoro. I metadati devono restare sotto la radice scelta, senza file o cartelle collegati. Le letture di token, account ricordati e politica firmata degli aggiornamenti verificano il file effettivamente aperto su Windows, impediscono modifiche o sostituzioni durante la lettura e applicano un limite di dimensione. I backup copiano da file aperti e verificati e calcolano l'impronta sullo stesso file di destinazione mantenuto in esclusiva. I test creano le cartelle temporanee con l'API atomica della piattaforma.
+
+Verifica del 18 novembre 2026: superati 20 test sui dati locali, 40 controlli di sicurezza, 11 sugli spazi account, 20 sulla politica degli aggiornamenti e 49 su aggiornamenti e workflow. Compilazioni senza errori o avvisi. Un nuovo database CodeQL C#, analizzato con la query sui percorsi invariata e il modello aggiuntivo di minaccia locale, non segnala problemi nei sei file modificati indicati sopra. La scansione estesa mantiene segnalazioni preesistenti altrove: non si dichiara la repository priva di avvisi. La scansione GitHub resta una condizione per il rilascio. Nessuna query, lingua o protezione disabilitata; nessun avviso archiviato. La correzione delle impostazioni mantiene leggibili le categorie con testo raddoppiato; il test attende il ridimensionamento effettivo senza aumentare il limite di 740px.

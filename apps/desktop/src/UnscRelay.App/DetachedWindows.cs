@@ -23,7 +23,7 @@ public partial class MainWindow
     async void OpenDetachedWindow(object? sender,CoreWebView2NewWindowRequestedEventArgs e)
     {
         e.Handled=true;
-        if(!Uri.TryCreate(e.Uri,UriKind.Absolute,out var uri)||uri.GetLeftPart(UriPartial.Path)!=Origin+"/detached.html"||!Guid.TryParse(uri.Fragment.TrimStart('#'),out _)||detachedWindows.Count>=10||closing||updating)return;
+        if(!Uri.TryCreate(e.Uri,UriKind.Absolute,out var uri)||uri.GetLeftPart(UriPartial.Path)!=Origin+"/detached.html"||!Guid.TryParse(uri.Fragment.TrimStart('#'),out _)||detachedWindows.Count>=10||CriticalUpdateRequired||closing||updating)return;
         var id=uri.Fragment.TrimStart('#');if(detachedWindows.ContainsKey(id))return;
         using var deferral=e.GetDeferral();var window=new DetachedWindow();detachedWindows.Add(id,window);
         try
