@@ -17,6 +17,8 @@ internal sealed class RdpView : Forms.AxHost
 {
     static readonly Guid EventsId = new("336D5562-EFA8-482E-8CB3-C5C0FC7A7DB6");
     readonly Action<string, bool> status;
+    bool multiMonitor;
+    internal bool MultiMonitorEnabled => ((IRdpMonitorSettings)Component).GetUseMultimon();
     readonly List<(int Id, Delegate Handler)> handlers = [];
     public RdpView(Action<string, bool> status) : base("A0C63C30-F08D-4AB4-907C-34905D770C7D") { this.status = status; }
     object Component => GetOcx() ?? throw new InvalidOperationException("Controllo RDP non inizializzato.");
@@ -32,7 +34,13 @@ internal sealed class RdpView : Forms.AxHost
         base.CreateSink();
         Hook(2, new Action(() => status("RDP connesso", true)));
         Hook(1, new Action(() => status("RDP: connessione in corso…", false)));
-        Hook(3, new Action(() => status("Accesso RDP completato", true)));
+        Hook(3, new Action(() => {
+            status("Accesso RDP completato", true);
+            if (multiMonitor) BeginInvoke(new Action(() => {
+                try { if (!IsDisposed && !Disposing && Visible && (int)((dynamic)Component).Connected != 0) ((dynamic)Component).FullScreen = true; }
+                catch (Exception ex) when (ex is COMException or InvalidOperationException) { status("RDP connesso: apertura multimonitor non riuscita. La sessione resta nella scheda.", true); }
+            }));
+        }));
         Hook(4, new Action<int>(reason => status("RDP disconnesso · codice " + reason, false)));
         Hook(10, new Action<int>(error => status("Errore RDP · codice " + error, false)));
     }
@@ -44,6 +52,10 @@ internal sealed class RdpView : Forms.AxHost
     }
     public void Configure(ConnectionProfile profile, string password, int width, int height)
     {
+        multiMonitor = profile.Rdp.MultiMonitor;
+        var monitors = (IRdpMonitorSettings)Component;
+        monitors.SetConnectionBarText("UNSC Relay / " + profile.Name);
+        monitors.SetUseMultimon(multiMonitor);
         dynamic client = Component; client.Server = profile.Host; client.UserName = profile.Username; client.Domain = profile.Domain;
         client.DesktopWidth = Math.Clamp(width, 640, 7680); client.DesktopHeight = Math.Clamp(height, 480, 4320); client.ColorDepth = 32;
         dynamic settings = client.AdvancedSettings9;
@@ -58,7 +70,8 @@ internal sealed class RdpView : Forms.AxHost
         settings.ClearTextPassword = password;
     }
     public void Connect(ConnectionProfile profile, string password, int width, int height) { Configure(profile, password, width, height); ((dynamic)Component).Connect(); }
-    public void Disconnect() { try { ((dynamic)Component).Disconnect(); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { } }
+    public void ReturnToTab() { try { if (((dynamic)Component).FullScreen) ((dynamic)Component).FullScreen = false; } catch (Exception ex) when (ex is COMException or InvalidOperationException) { } }
+    public void Disconnect() { ReturnToTab(); try { ((dynamic)Component).Disconnect(); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { } }
 }
 internal sealed class DesktopSession : IDisposable
 {
@@ -67,13 +80,10 @@ internal sealed class DesktopSession : IDisposable
     public VncControl? Vnc { get; init; }
     public TcpClient? Socket { get; set; }
     public IDisposable? Route { get; set; }
-    public System.Diagnostics.Process? ExternalProcess {get;set;}
-    public string? ExternalFile {get;set;}
     public bool Disposed { get; private set; }
     public void Dispose()
     {
         if (Disposed) return; Disposed = true;
-        if(ExternalProcess!=null){try{if(!ExternalProcess.HasExited)ExternalProcess.CloseMainWindow();}catch(InvalidOperationException){}ExternalProcess.Dispose();}if(ExternalFile!=null&&File.Exists(ExternalFile))File.Delete(ExternalFile);
         Socket?.Dispose(); Rdp?.Disconnect(); Vnc?.Client?.Close(); Host.Dispose(); Route?.Dispose();
     }
 }
@@ -105,9 +115,9 @@ public partial class MainWindow
     {
         foreach (var (id, session) in desktopSessions)
         {
-            if (!desktopRects.TryGetValue(id, out var rect) || rect.Width < 10 || rect.Height < 10) { session.Host.Visibility = Visibility.Hidden; continue; }
+            if (!desktopRects.TryGetValue(id, out var rect) || rect.Width < 10 || rect.Height < 10) { session.Rdp?.ReturnToTab(); session.Host.Visibility = Visibility.Hidden; continue; }
             var windowId=desktopWindows.GetValueOrDefault(id,"");var layer=windowId.Length==0?DesktopLayer:detachedWindows.TryGetValue(windowId,out var floating)?floating.DesktopLayer:null;
-            if(layer==null){session.Host.Visibility=Visibility.Hidden;continue;}
+            if(layer==null){session.Rdp?.ReturnToTab();session.Host.Visibility=Visibility.Hidden;continue;}
             if(session.Host.Parent is Canvas oldLayer&&oldLayer!=layer)oldLayer.Children.Remove(session.Host);if(session.Host.Parent==null)layer.Children.Add(session.Host);
             Canvas.SetLeft(session.Host, rect.Left); Canvas.SetTop(session.Host, rect.Top); session.Host.Width = rect.Width; session.Host.Height = rect.Height; session.Host.Visibility = Visibility.Visible;
             session.Host.Child?.BringToFront();
@@ -117,24 +127,14 @@ public partial class MainWindow
     async Task<object> ConnectDesktop(ConnectionProfile profile, string id)
     {
         DesktopRoutes.Validate(profile, data.Profiles);
-        var password = profile.Protocol=="rdp"&&profile.Rdp.MultiMonitor?"":ConnectionPassword(profile);
+        var password = ConnectionPassword(profile);
         var route = await DesktopRoutes.OpenAsync(profile, data.Profiles, (p, host, targetPort) => CreateAuthenticatedSession(p, host, targetPort, Guid.NewGuid().ToString("N")));
         var endpoint = route.Host; var port = route.Port;
         var hostView = new WindowsFormsHost { Width = 800, Height = 500 }; DesktopSession? session = null;
         void Status(string text, bool connected) { if (session?.Disposed != true) Emit("desktopStatus", new { sessionId = id, text, connected, pending = text.StartsWith("RDP: connessione", StringComparison.Ordinal) }); }
         try
         {
-            if(profile.Protocol=="rdp"&&profile.Rdp.MultiMonitor)
-            {
-                if(!Confirm("Aprire RDP su piu monitor nel client Microsoft?\nLe credenziali saranno richieste da Windows. La scheda Relay gestisce il collegamento e l'eventuale tunnel SSH.\nLa verifica dei certificati resta attiva."))throw new OperationCanceledException();
-                var folder=Path.Combine(dataPath,"RdpLaunch");Directory.CreateDirectory(folder);var file=Path.Combine(folder,Guid.NewGuid().ToString("N")+".rdp");
-                File.WriteAllText(file,RdpDocument.Create(profile,endpoint,port),System.Text.Encoding.Unicode);
-                var info=new System.Diagnostics.ProcessStartInfo(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System),"mstsc.exe")){UseShellExecute=false};info.ArgumentList.Add(file);info.ArgumentList.Add("/multimon");
-                session=new DesktopSession{Host=hostView,Route=route,ExternalFile=file};session.ExternalProcess=System.Diagnostics.Process.Start(info)??throw new IOException("Client Microsoft non avviato.");desktopSessions.Add(id,session);var external=session;
-                _=Task.Run(async()=>{try{await external.ExternalProcess.WaitForExitAsync();}catch(Exception ex)when(ex is InvalidOperationException or ObjectDisposedException){}await Dispatcher.InvokeAsync(()=>{if(!external.Disposed){Status("Client Microsoft terminato",false);DisconnectDesktop(id);}});});
-                Status("RDP aperto nel client Microsoft / piu monitor",false);return new {sessionId=id,filesAvailable=false,desktop=true,pending=false,external=true};
-            }
-            else if (profile.Protocol == "rdp")
+            if (profile.Protocol == "rdp")
             {
                 var control = new RdpView(Status) { Dock = Forms.DockStyle.Fill };
                 ((ISupportInitialize)control).BeginInit(); hostView.Child = control;

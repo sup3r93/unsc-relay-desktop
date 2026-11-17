@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -60,6 +61,13 @@ namespace Renci.SshNet.Sftp
         {
             _encoding = encoding;
             _sftpResponseFactory = sftpResponseFactory;
+        }
+
+        internal SftpSession(Stream input, Stream output, Action close, int timeout, Encoding encoding, ISftpResponseFactory factory)
+            : base(input, output, close, timeout)
+        {
+            _encoding = encoding;
+            _sftpResponseFactory = factory;
         }
 
         /// <inheritdoc/>
@@ -1627,7 +1635,7 @@ namespace Renci.SshNet.Sftp
             // one containing 16384 bytes (13 bytes header, and 16371 bytes file data)
             // and one with the remaining 13 bytes of file data
             const uint lengthOfNonDataProtocolFields = 13u;
-            var maximumPacketSize = Channel.LocalPacketSize;
+            var maximumPacketSize = LocalPacketSize;
             return Math.Min(bufferSize, maximumPacketSize) - lengthOfNonDataProtocolFields;
         }
 
@@ -1658,7 +1666,7 @@ namespace Renci.SshNet.Sftp
              */
 
             var lengthOfNonDataProtocolFields = 25u + (uint)handle.Length;
-            var maximumPacketSize = Channel.RemotePacketSize;
+            var maximumPacketSize = RemotePacketSize;
             return Math.Min(bufferSize, maximumPacketSize) - lengthOfNonDataProtocolFields;
         }
 

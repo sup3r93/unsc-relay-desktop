@@ -51,8 +51,12 @@ public partial class MainWindow
                 DesktopLayer.Children.Add(host); host.UpdateLayout(); ((ISupportInitialize)rdp).EndInit(); rdp.CreateControl();
                 componentVersion = rdp.ComponentVersion; rdp.Configure(new ConnectionProfile { Protocol = "rdp", Host = "localhost", Username = "fixture", Port = 3389, Authentication = "password" }, "NOT-A-REAL-PASSWORD", 800, 600);
                 checks["rdpActiveXCreatedAndConfigured"] = componentVersion.Length > 0;
+                rdp.Configure(new ConnectionProfile { Protocol = "rdp", Host = "127.0.0.1", Username = "fixture", Authentication = "password", Rdp = new() { MultiMonitor = true } }, "NOT-A-REAL-PASSWORD", 800, 600);
+                checks["rdpEmbeddedMultimonitorEnabledViaWindowsInterface"] = rdp.MultiMonitorEnabled;
+
                 rdp.Configure(new ConnectionProfile { Protocol = "rdp", Host = "127.0.0.1", Username = "fixture", Port = 49321, Authentication = "password" }, "NOT-A-REAL-PASSWORD", 800, 600);
                 var settings = rdp.EndpointSettings();
+                checks["rdpEmbeddedMultimonitorResetsForSingleMonitor"] = !rdp.MultiMonitorEnabled;
                 checks["rdpLoopbackEndpointPreservesNlaAndCertificateVerification"] = settings.Host == "127.0.0.1" && settings.Port == 49321 && settings.Nla && settings.Authentication == 2;
                 var refusedListener = new TcpListener(IPAddress.Loopback, 0); refusedListener.Start(); var refusedPort = ((IPEndPoint)refusedListener.LocalEndpoint).Port; refusedListener.Stop();
                 rdp.Connect(new ConnectionProfile { Protocol = "rdp", Host = "127.0.0.1", Username = "fixture", Port = refusedPort, Authentication = "password", ConnectTimeoutSeconds = 5 }, "NOT-A-REAL-PASSWORD", 800, 600);
@@ -82,7 +86,7 @@ public partial class MainWindow
         }
         catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
         finally { foreach (var id in desktopSessions.Keys.ToArray()) DisconnectDesktop(id); }
-        var success = error == null && checks.Count == 16 && checks.Values.All(v => v);
+        var success = error == null && checks.Count == 18 && checks.Values.All(v => v);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "desktop-smoke-result.json"), JsonSerializer.Serialize(new { success, componentVersion, checks, rdpEvents, error }, ProfileStore.Json));
         CompleteSmoke(success);
     }

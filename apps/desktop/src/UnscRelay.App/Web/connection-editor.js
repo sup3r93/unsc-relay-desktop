@@ -4,6 +4,7 @@ function folderChoices(current){
  return [...paths].sort((a,b)=>a.localeCompare(b)).map(path=>{const parts=path.split('/');return[path,'\u00a0'.repeat((parts.length-1)*3)+(parts.length>1?'└ ':'')+parts.at(-1)]})
 }
 function renderConnectionProfile(existing,selection=null,draft=null){
+ if(existing?.storage?.browser||selection?.storage)return storageProfileDialog(existing,selection,draft);
  if(existing?.protocol==='native'||selection?.protocol==='native')return nativeProfileDialog(existing,selection,draft);
  const p=existing?structuredClone(existing):{id:crypto.randomUUID().replaceAll('-',''),name:'',folder:'Connessioni',host:'',port:22,username:'',protocol:'ssh',environment:'sviluppo',keyId:'',passwordId:'',authentication:'password',remoteDirectory:'.',notes:'',tags:'',jumpHost:'',tmuxSession:'',subsystem:'',favorite:false,tunnels:[]};
  if(!existing&&selection){Object.assign(p,draft||{},{protocol:selection.protocol,localShell:selection.shell||'cmd',port:selection.protocol==='rdp'?3389:selection.protocol==='vnc'?5900:22});}

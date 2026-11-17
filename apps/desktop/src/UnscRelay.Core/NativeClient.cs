@@ -12,6 +12,7 @@ public sealed record NativeOptions
     public string Signature {get;set;}="default";
     public string SerialPort {get;set;}="COM1";
     public int Baud {get;set;}=115200;
+    public int Port {get;set;}
     public string ArgumentsJson {get;set;}="[]";
     public void Validate()
     {
@@ -25,6 +26,7 @@ public sealed record NativeOptions
         if(Kind=="serial"&&(!System.Text.RegularExpressions.Regex.IsMatch(SerialPort,@"^COM[1-9][0-9]{0,3}$")||Baud is <300 or >4000000))throw new ArgumentException("Porta seriale o baud non validi.");
         var args=System.Text.Json.JsonSerializer.Deserialize<string[]>(ArgumentsJson)??throw new ArgumentException("Inserisci un elenco JSON di argomenti.");
         if(args.Length>64||args.Any(a=>a==null||a.Length>4096||a.Contains('\0')))throw new ArgumentException("Troppi argomenti o valori non validi.");
+        if(Port is <0 or >65535)throw new ArgumentException("Porta OpenSSH non valida.");
         if(Kind is "ssh" or "sftp" && args.Length!=0)throw new ArgumentException("Per SSH/SFTP usa il file config, non argomenti aggiuntivi.");
     }
 }
@@ -45,6 +47,7 @@ public static class NativeClient
         if(o.Kind is "ssh" or "sftp"){
             if(o.Kind=="sftp")args.AddRange(["-S",P(Path.Combine(Path.GetDirectoryName(executable)!,"ssh.exe"))]);
             if(o.ConfigFile.Length>0){if(!File.Exists(o.ConfigFile))throw new IOException("File config non trovato.");args.AddRange(["-F",P(o.ConfigFile)]);}
+            if(o.Port>0)args.AddRange(["-o","Port="+o.Port]);
             if(o.IdentityFile.Length>0){if(!File.Exists(o.IdentityFile))throw new IOException("File identita non trovato.");args.AddRange(["-i",P(o.IdentityFile),"-o","IdentitiesOnly=yes"]);}
             if(o.Signature!="default")args.AddRange(["-o","PubkeyAcceptedAlgorithms="+o.Signature]);
             if(profile.RequirePostQuantumKex)args.AddRange(["-o","KexAlgorithms=mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com"]);

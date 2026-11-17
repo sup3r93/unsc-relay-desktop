@@ -6,7 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="Lemutec.RemoteViewing.Windows.Forms" Version="1.2.1" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -17,7 +17,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>UNSC Relay</AssemblyName>
-    <Version>0.2.16</Version>
+    <Version>0.2.17</Version>
     <ApplicationIcon>Assets\Relay.ico</ApplicationIcon>
   </PropertyGroup>
 

@@ -25,11 +25,10 @@ public partial class MainWindow
                 }
                 if(!vault.Exists){var seed=RandomNumberGenerator.GetBytes(32);try{await Task.Run(()=>vault.Unlock(Convert.ToBase64String(seed)));}finally{CryptographicOperations.ZeroMemory(seed);}}
                 if(generation!=authenticationGeneration)throw new OperationCanceledException("La sessione è stata bloccata. Ripeti l’accesso.");
-                SyncLocalBackup.Create(dataPath,false);
-                using var binding=vault.BindAccount(cloud.State.Owner,device,remote);
-                AccountUnlocks.Save(binding);
-                SyncLocalBackup.Complete(dataPath);
+
             }
+            if(generation!=authenticationGeneration)throw new OperationCanceledException("La sessione è stata bloccata. Ripeti l’accesso.");
+            if(existing==null||existing.Version<2)await Task.Run(()=>vault.MigrateAccountUnlock(AccountUnlocks,cloud.State.Owner,device,remote));
             CompleteAppAuthentication(generation);
         }catch{vault.Lock();throw;}
         finally{if(remote!=null)CryptographicOperations.ZeroMemory(remote);}
