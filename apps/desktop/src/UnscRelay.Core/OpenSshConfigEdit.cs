@@ -16,11 +16,16 @@ public sealed class OpenSshConfigEdit
     public DateTime Expires {get;}=DateTime.UtcNow.AddMinutes(5);
     public OpenSshConfigEdit(string path,IEnumerable<ConnectionProfile> profiles)
     {
-        PathName=Path.GetFullPath(path);existed=File.Exists(PathName);
+        PathName=Path.GetFullPath(path); CheckParents(); existed=File.Exists(PathName);
         if(Directory.Exists(PathName))throw new IOException("Seleziona un file config.");
         if(existed&&File.GetAttributes(PathName).HasFlag(FileAttributes.ReparsePoint))throw new IOException("Il config non può essere un collegamento.");
-        if(existed&&new FileInfo(PathName).Length>1048576)throw new IOException("Config maggiore di 1 MiB.");
-        original=existed?File.ReadAllBytes(PathName):[];
+        original=[];
+        if(existed)
+        {
+            using var input=new FileStream(PathName,FileMode.Open,FileAccess.Read,FileShare.Read);
+            if(input.Length>1048576)throw new IOException("Config maggiore di 1 MiB.");
+            original=new byte[(int)input.Length]; input.ReadExactly(original);
+        }
         var bom=original.AsSpan().StartsWith(Encoding.UTF8.Preamble);var offset=bom?3:0;
         Before=new UTF8Encoding(false,true).GetString(original,offset,original.Length-offset);
         var unmanaged=Before;
@@ -42,16 +47,19 @@ public sealed class OpenSshConfigEdit
         var content=Encoding.UTF8.GetBytes(After);replacement=bom?[..Encoding.UTF8.Preamble,..content]:content;
         if(replacement.Length>1048576)throw new IOException("Il risultato supera 1 MiB.");
     }
+    void CheckParents() => FolderSync.CheckLocalParents(Path.GetDirectoryName(PathName)!);
     public string Apply()
     {
+        CheckParents();
         if(DateTime.UtcNow>Expires)throw new IOException("Anteprima scaduta: rigenerala.");
         if(File.Exists(PathName)!=existed)throw new IOException("Il config è cambiato dopo l'anteprima.");
-        Directory.CreateDirectory(Path.GetDirectoryName(PathName)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(PathName)!); CheckParents();
         var temp=PathName+".relay-"+Guid.NewGuid().ToString("N")+".tmp";
-        string backup="";
+        string backup=""; var created=false;
         try
         {
-            File.WriteAllBytes(temp,replacement);
+            using(var output=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) { created=true; output.Write(replacement); output.Flush(true); }
+            CheckParents();
             if(existed)
             {
                 if(File.GetAttributes(PathName).HasFlag(FileAttributes.ReparsePoint))throw new IOException("Il config è diventato un collegamento.");
@@ -63,6 +71,6 @@ public sealed class OpenSshConfigEdit
             else File.Move(temp,PathName,false);
             return backup;
         }
-        finally{if(File.Exists(temp))File.Delete(temp);}
+        finally{try{if(created){CheckParents();if(File.Exists(temp))File.Delete(temp);}}catch(IOException){ /* Do not follow a redirected parent during cleanup. */ }}
     }
 }

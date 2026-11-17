@@ -42,6 +42,17 @@ static class SecurityReviewChecks
             Reject(() => UpdateBackup.Create(linkedFile, "fixture"), "Backup refuses an allowlisted file redirected by a link");
             Check(!Directory.Exists(Path.Combine(target, "UpdateBackups")) && Directory.GetFileSystemEntries(target).Length == 1, "Rejected links create no backup outside the selected root");
             Check(File.ReadAllText(Path.Combine(target, "outside.txt")) == "outside synthetic fixture", "Rejected links preserve outside content");
+            var configTarget = Path.Combine(fixture, "config-target"); Directory.CreateDirectory(configTarget);
+            var configBytes = System.Text.Encoding.UTF8.GetBytes("Host personal\n  HostName 192.0.2.80\n");
+            File.WriteAllBytes(Path.Combine(configTarget,"config"),configBytes);
+            var configAlias = Path.Combine(fixture,"config-alias"); Directory.CreateSymbolicLink(configAlias,configTarget);
+            var configProfile = new ConnectionProfile { Name="fixture",Host="192.0.2.81",Username="fixture" };
+            Reject(()=>new OpenSshConfigEdit(Path.Combine(configAlias,"config"),[configProfile]),"SSH config preview rejects a linked parent directory");
+            var configOwned = Path.Combine(fixture,"config-owned"); Directory.CreateDirectory(configOwned); File.WriteAllBytes(Path.Combine(configOwned,"config"),configBytes);
+            var configPreview = new OpenSshConfigEdit(Path.Combine(configOwned,"config"),[configProfile]);
+            Directory.Move(configOwned,configOwned+"-original"); Directory.CreateSymbolicLink(configOwned,configTarget);
+            Reject(()=>configPreview.Apply(),"SSH config apply rejects a parent replaced by a link after preview");
+            Check(File.ReadAllBytes(Path.Combine(configTarget,"config")).SequenceEqual(configBytes)&&Directory.GetFileSystemEntries(configTarget).Length==1,"Rejected config parent links leave external bytes and directory unchanged");
             var accountDirectory=Path.Combine(root.FullName,"account-backup");Directory.CreateDirectory(accountDirectory);
             var accountOwner=new string('D',64);var serverHalf=RandomNumberGenerator.GetBytes(32);
             try
