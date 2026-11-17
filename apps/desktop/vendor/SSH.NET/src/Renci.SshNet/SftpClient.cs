@@ -127,7 +127,7 @@ namespace Renci.SshNet
         {
             get
             {
-                return base.IsConnected && _sftpSession?.IsOpen == true;
+                return (_externalSubsystem || base.IsConnected) && _sftpSession?.IsOpen == true;
             }
         }
 
@@ -2601,6 +2601,21 @@ namespace Renci.SshNet
         /// <summary>
         /// Called when client is connected to the server.
         /// </summary>
+        private bool _externalSubsystem;
+
+        /// <summary>
+        /// Takes ownership of an already authenticated subsystem's streams. Does not open an SSH transport.
+        /// </summary>
+        public static SftpClient FromSubsystemStreams(Stream input, Stream output, Action close, TimeSpan timeout)
+        {
+            var client = new SftpClient("external-channel.invalid", "external", "") { OperationTimeout = timeout };
+            var session = new SftpSession(input, output, close, client._operationTimeout, Encoding.UTF8, client.ServiceFactory.CreateSftpResponseFactory());
+            client._externalSubsystem = true;
+            client._sftpSession = session;
+            try { session.Connect(); return client; }
+            catch { client.Dispose(); throw; }
+        }
+
         protected override void OnConnected()
         {
             base.OnConnected();

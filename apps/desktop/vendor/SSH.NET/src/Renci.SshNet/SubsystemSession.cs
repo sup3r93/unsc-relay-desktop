@@ -1,5 +1,7 @@
 using System;
 using System.Globalization;
+using System.IO;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,6 +34,55 @@ namespace Renci.SshNet
         private EventWaitHandle _sessionDisconnectedWaitHandle = new ManualResetEvent(initialState: false);
         private EventWaitHandle _channelClosedWaitHandle = new ManualResetEvent(initialState: false);
         private bool _isDisposed;
+        private readonly Stream _externalInput;
+        private readonly Stream _externalOutput;
+        private readonly Action _externalClose;
+        private readonly object _externalEvents = new object();
+        private readonly object _externalWrite = new object();
+        private volatile bool _externalOpen;
+        private bool _externalClosing;
+        private Exception ChannelClosedError() => _externalInput != null
+            ? new SshConnectionException("Native subsystem channel was closed.", Renci.SshNet.Messages.Transport.DisconnectReason.ConnectionLost)
+            : new SshException("Channel was closed.");
+        internal uint LocalPacketSize => _externalInput != null ? 32768u : Channel.LocalPacketSize;
+        internal uint RemotePacketSize => _externalInput != null ? 32768u : Channel.RemotePacketSize;
+
+        // The caller owns SSH authentication; these streams carry only an SFTP subsystem.
+        protected SubsystemSession(Stream input, Stream output, Action close, int timeout)
+        {
+            _externalInput = input ?? throw new ArgumentNullException(nameof(input));
+            _externalOutput = output ?? throw new ArgumentNullException(nameof(output));
+            _externalClose = close ?? throw new ArgumentNullException(nameof(close));
+            _logger = NullLogger.Instance;
+            OperationTimeout = timeout;
+        }
+        private async Task ReadExternalAsync()
+        {
+            var bytes = new byte[32768];
+            try
+            {
+                int count;
+                while ((count = await _externalInput.ReadAsync(bytes, 0, bytes.Length).ConfigureAwait(false)) > 0)
+                {
+                    lock (_externalEvents)
+                    {
+                        if (_externalClosing) return;
+                        OnDataReceived(new ArraySegment<byte>(bytes, 0, count));
+                    }
+                }
+                lock (_externalEvents)
+                {
+                    if (!_externalClosing) { _externalOpen = false; _channelClosedWaitHandle.Set(); }
+                }
+            }
+            catch (Exception error)
+            {
+                lock (_externalEvents)
+                {
+                    if (!_externalClosing) { _externalOpen = false; RaiseError(error is IOException ? new SshConnectionException("Native subsystem transport failed.", Renci.SshNet.Messages.Transport.DisconnectReason.ConnectionLost,error) : error); }
+                }
+            }
+        }
 
         /// <inheritdoc/>
         public int OperationTimeout { get; set; }
@@ -70,14 +121,14 @@ namespace Renci.SshNet
         /// </value>
         public bool IsOpen
         {
-            get { return _channel is not null && _channel.IsOpen; }
+            get { return _externalInput != null ? _externalOpen : _channel is not null && _channel.IsOpen; }
         }
 
         public ILoggerFactory SessionLoggerFactory
         {
             get
             {
-                return _session.SessionLoggerFactory;
+                return _session?.SessionLoggerFactory ?? NullLoggerFactory.Instance;
             }
         }
 
@@ -108,6 +159,14 @@ namespace Renci.SshNet
         public void Connect()
         {
             ObjectDisposedException.ThrowIf(_isDisposed, this);
+            if (_externalInput != null)
+            {
+                if (_externalOpen || _externalClosing) throw new InvalidOperationException("External subsystem cannot reconnect.");
+                _externalOpen = true;
+                _ = Task.Run(ReadExternalAsync);
+                OnChannelOpen();
+                return;
+            }
 
             if (IsOpen)
             {
@@ -148,6 +207,19 @@ namespace Renci.SshNet
         /// </summary>
         public void Disconnect()
         {
+            if (_externalInput != null)
+            {
+                lock (_externalEvents)
+                {
+                    if (_externalClosing) return;
+                    _externalClosing = true;
+                    _externalOpen = false;
+                    _channelClosedWaitHandle.Set();
+                }
+                try { _externalClose(); }
+                finally { _externalInput.Dispose(); _externalOutput.Dispose(); }
+                return;
+            }
             UnsubscribeFromSessionEvents(_session);
 
             var channel = _channel;
@@ -181,7 +253,15 @@ namespace Renci.SshNet
             ObjectDisposedException.ThrowIf(_isDisposed, this);
             EnsureSessionIsOpen();
 
-            _channel.SendData(data, offset, count);
+            if (_externalOutput != null)
+            {
+                lock (_externalWrite)
+                {
+                    try { _externalOutput.Write(data, offset, count); _externalOutput.Flush(); }
+                    catch (IOException error) { throw new SshConnectionException("Native subsystem transport failed.", Renci.SshNet.Messages.Transport.DisconnectReason.ConnectionLost,error); }
+                }
+            }
+            else _channel.SendData(data, offset, count);
         }
 
         /// <summary>
@@ -259,7 +339,7 @@ namespace Renci.SshNet
                 case 1:
                     throw new SshException("Connection was closed by the server.");
                 case 2:
-                    throw new SshException("Channel was closed.");
+                    throw ChannelClosedError();
                 case 3:
                     break;
                 case WaitHandle.WaitTimeout:
@@ -301,7 +381,7 @@ namespace Renci.SshNet
 
                 using RegisteredWait channelClosedReg = new(
                     _channelClosedWaitHandle,
-                    static (tcs, _) => ((TaskCompletionSource<T>)tcs).TrySetException(new SshException("Channel was closed.")),
+                    (tcs, _) => ((TaskCompletionSource<T>)tcs).TrySetException(ChannelClosedError()),
                     state: tcs);
 
                 using var timeoutCts = new CancellationTokenSource(millisecondsTimeout);
@@ -359,7 +439,7 @@ namespace Renci.SshNet
                 case 1:
                     throw new SshException("Connection was closed by the server.");
                 case 2:
-                    throw new SshException("Channel was closed.");
+                    throw ChannelClosedError();
                 case WaitHandle.WaitTimeout:
                     throw new SshOperationTimeoutException("Operation has timed out.");
                 default:
@@ -406,6 +486,7 @@ namespace Renci.SshNet
         {
             if (!IsOpen)
             {
+                if (_externalInput != null) throw ChannelClosedError();
                 throw new InvalidOperationException("The session is not open.");
             }
         }

@@ -48,7 +48,7 @@ public partial class MainWindow
         if(args.TryGetProperty("sessionId",out var sid)){target=Session(args);binding=RouteSnapshot(target.Profile);}
         var detail="Un client MCP locale richiede accesso. Il componente verificato è UNSC Relay MCP.exe; il servizio AI che lo usa non è identificabile automaticamente.\n\nAutorizzazione valida SOLO per questa richiesta. Le risposte potranno essere condivise con il servizio AI dal client.\n\nOperazione: "+tool+"\n"+(target==null?"":$"Macchina: {target.Profile.Name} / {target.Profile.Username}@{target.Profile.Host}:{target.Profile.Port}\n")+"\nParametri esatti:\n"+JsonSerializer.Serialize(args,ProfileStore.Json)+"\n\nL’input al terminale viene inviato esattamente come indicato: eventuali invii eseguono comandi. I file remoti possono contenere dati riservati. Nessun accesso a chiavi private, password o token dell’app.\nRifiutando non verranno restituiti dati né eseguite operazioni.";
         if(accessSmokeTest){if(accessTestConsent==null||!accessTestConsent(tool,args))throw new OperationCanceledException();}
-        else {Activate();var approval=new AccessApprovalDialog(this,"Richiesta API / ChatGPT o client MCP",detail,vault.WindowsHello()!=null);
+        else {Activate();var approval=new AccessApprovalDialog(this,"Richiesta API / ChatGPT o client MCP",detail,AccountHelloAllowed(),account:cloud.State.Activated);
         if(approval.ShowDialog()!=true)throw new OperationCanceledException();RequireAssistantAccess(token);
         await VerifyLocalIdentity("Autorizza richiesta API",approval.Method);}
         if(accessSmokeTest){if(accessTestIdentity==null)throw new OperationCanceledException();await accessTestIdentity();}RequireAssistantAccess(token);

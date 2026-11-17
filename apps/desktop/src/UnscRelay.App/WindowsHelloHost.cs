@@ -8,24 +8,36 @@ public partial class MainWindow
     async Task<object> EnableHello()
     {
         if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello aperta.");
-        helloBusy = true;
+        if(!vault.IsUnlocked)throw new InvalidOperationException("Accedi prima con il tuo account.");
+        if(!Confirm("Abilitare Windows Hello per questo account Relay su questo PC? Chiunque possa usare il PIN o i metodi Hello dello stesso account Windows potrebbe aprire l’archivio. Su un account Windows condiviso lascia questa opzione disattivata."))return Snapshot();
+        await VerifyLocalIdentity("Conferma account prima di abilitare Windows Hello","account");
+        var generation=authenticationGeneration;helloBusy = true;
         try
         {
-            if (vault.WindowsHello() != null) throw new InvalidOperationException("Windows Hello è già abilitato per questo archivio.");
-            var master = Secret("Abilita Windows Hello", "Conferma la password principale. In seguito potrai sbloccare con il PIN o la biometria di Windows Hello.");
-            await Task.Run(() => vault.VerifyMasterPassword(master));
+            using var accountBinding=AccountUnlocks.Read(cloud.State.Owner)??throw new InvalidOperationException("Completa prima l’accesso online.");
+            if(vault.WindowsHello()!=null){
+                var challenge=vault.PrepareWindowsHelloIdentity();var signature=await WindowsHelloService.SignAsync(challenge);
+                try{vault.VerifyWindowsHelloIdentity(challenge,signature);}finally{CryptographicOperations.ZeroMemory(signature);}
+                if(generation!=authenticationGeneration)throw new OperationCanceledException("Sessione bloccata. Ripeti l’abilitazione.");
+                AccountUnlocks.ConfirmHello(cloud.State.Owner,challenge.KeyName);return Snapshot();
+            }
             var prepared = vault.PrepareWindowsHello();
-            if(!accessBusy)Emit("helloPending", new { });
+            Emit("helloPending", new { });
             var proof = await WindowsHelloService.CreateAsync(prepared); var committed = false;
-            try { await Task.Run(() => vault.EnableWindowsHello(proof.Challenge, proof.Signature, master)); committed = true; }
+            try {
+                if(generation!=authenticationGeneration)throw new OperationCanceledException("Sessione bloccata. Ripeti l’abilitazione.");
+                vault.EnableWindowsHelloForUnlockedVault(proof.Challenge, proof.Signature);committed=true;
+                AccountUnlocks.ConfirmHello(cloud.State.Owner,proof.Challenge.KeyName);
+            }
             finally { CryptographicOperations.ZeroMemory(proof.Signature); if (!committed) await WindowsHelloService.DeleteAsync(proof.Challenge.KeyName); }
             return Snapshot();
         }
-        finally { helloBusy = false; if(!accessBusy)Emit("helloFinished", new { }); }
+        finally { helloBusy = false; Emit("helloFinished", new { }); }
     }
     async Task<object> UnlockHello()
     {
         if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello aperta.");
+        if(!AccountHelloAllowed())throw new InvalidOperationException("Windows Hello non è abilitato manualmente per questo account e questo PC. Accedi online.");
         var generation=authenticationGeneration;helloBusy = true;
         try
         {

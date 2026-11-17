@@ -14,6 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
 
 
+# Packaged smoke modes use the exact same server behavior as source smoke modes.
+if "--packaged-native" in sys.argv:
+    sys.argv.append("--app-native")
+if "--packaged-access" in sys.argv:
+    sys.argv.append("--app-access")
+
+
 class Authentication(paramiko.ServerInterface):
     def __init__(self, directory=None):
         self.directory = directory
@@ -23,8 +30,17 @@ class Authentication(paramiko.ServerInterface):
         if '--app-native' in sys.argv and text == 'echo NATIVE-MACRO-FIXTURE\nexec "${SHELL:-/bin/sh}" -l':
             (Path(self.directory) / 'native-macro.txt').write_bytes(command)
             return self.check_channel_shell_request(channel)
-        if '--app-recovery' in sys.argv and text=='fixture-ok':
+        if any(mode in sys.argv for mode in ['--app-recovery','--app-native']) and text=='fixture-ok':
             with open(Path(self.directory) / 'hook-count.txt', 'a') as trace: trace.write('hook\n')
+        if text == "cd -- '.' && pwd -P":
+            def directory():
+                import time
+                time.sleep(.05)
+                try:
+                    channel.sendall(b'/fixture-root\n'); channel.send_exit_status(0); channel.close()
+                except (OSError, EOFError): pass
+            threading.Thread(target=directory, daemon=True).start()
+            return True
         if text in ('fixture-sftp', 'sudo -n fixture-sftp'):
             with open(Path(self.directory) / 'exec-count.txt', 'a') as stream:
                 stream.write(text + '\n')
@@ -47,6 +63,8 @@ class Authentication(paramiko.ServerInterface):
         return False
 
     def check_auth_password(self, username, password):
+        if "--native-control" in sys.argv:
+            with open(Path(self.directory) / "control-auth.txt", "a") as trace: trace.write("auth\n")
         return paramiko.AUTH_SUCCESSFUL if username in ("test", "password-only") and password == "relay-test-password" else paramiko.AUTH_FAILED
 
     def get_allowed_auths(self, username):
@@ -91,7 +109,7 @@ class Authentication(paramiko.ServerInterface):
 
 class FixtureSFTPServer(paramiko.SFTPServer):
     def _send_server_version(self):
-        if "--app-access" not in sys.argv and "--app-recovery" not in sys.argv and "--files-only" not in sys.argv and "--app-files" not in sys.argv and "--packaged-files" not in sys.argv:
+        if "--native-control" not in sys.argv and "--app-native" not in sys.argv and "--app-access" not in sys.argv and "--app-recovery" not in sys.argv and "--files-only" not in sys.argv and "--app-files" not in sys.argv and "--packaged-files" not in sys.argv:
             return super()._send_server_version()
         from paramiko.sftp import CMD_INIT, CMD_VERSION
         packet_type, data = self._read_packet()
@@ -215,7 +233,7 @@ def main():
                         if not only_sftp: offline_until[0] = time.monotonic() + .4
                         for transport in list(transports):
                             if not only_sftp or not getattr(transport, 'relay_shell', False): transport.close()
-        if '--app-recovery' in sys.argv: threading.Thread(target=outages, daemon=True).start()
+        if '--app-recovery' in sys.argv or '--app-native' in sys.argv: threading.Thread(target=outages, daemon=True).start()
 
         def serve(client):
             transport = paramiko.Transport(client)
@@ -255,6 +273,10 @@ def main():
             if "--terminal-only" in sys.argv: options=["--terminal-only"]
             if "--native-integration-only" in sys.argv:
                 options = ["--native-integration-only", str(ROOT / "src/UnscRelay.App/Tools"), str(ROOT / "src/UnscRelay.App/bin/Release/net10.0-windows10.0.19041.0/UNSC Relay.exe")]
+            if "--native-control" in sys.argv:
+                options = ["--native-control", os.environ["RELAY_FIXTURE_TOOLS"], str(ROOT / "src/UnscRelay.App/bin/Release/net10.0-windows10.0.19041.0/UNSC Relay.exe")]
+            if "--native-hook-integration" in sys.argv:
+                options = ["--native-hook-integration", os.environ["RELAY_FIXTURE_TOOLS"], str(ROOT / "src/UnscRelay.App/bin/Release/net10.0-windows10.0.19041.0/UNSC Relay.exe")]
             environment = dict(os.environ, RELAY_FIXTURE_ROOT=directory, RELAY_FIXTURE_HOST_PUBLIC=key.get_name()+" "+key.get_base64())
             if "--app-access" in sys.argv or "--app-recovery" in sys.argv or "--app-native" in sys.argv or "--app-files" in sys.argv or "--packaged-files" in sys.argv or "--app-windows" in sys.argv or "--packaged-windows" in sys.argv:
                 executable = ROOT / "src/UnscRelay.App/bin/Release/net10.0-windows10.0.19041.0/UNSC Relay.exe"

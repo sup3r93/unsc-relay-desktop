@@ -13,6 +13,7 @@ public sealed record ConnectionProfile
     public string Protocol { get; set; } = "ssh";
     public NativeOptions Native { get; set; } = new();
     public RdpOptions Rdp { get; set; } = new();
+    public StorageOptions Storage {get;set;} = new();
     public string LocalShell { get; set; } = "cmd";
     public string StartupDirectory { get; set; } = "";
     public string StartupCommands { get; set; } = "";
@@ -52,15 +53,21 @@ public sealed record ConnectionProfile
         if (string.IsNullOrWhiteSpace(Username) && Protocol is "ssh" or "sftp") throw new ArgumentException("Indica l'utente SSH.");
         if (Username.Any(char.IsControl)) throw new ArgumentException("Utente non valido.");
         if (Protocol is not ("ssh" or "sftp" or "rdp" or "vnc" or "local" or "native")) throw new ArgumentException("Protocollo non supportato.");
-        if (Native == null || Rdp == null) throw new ArgumentException("Opzioni sessione mancanti.");
-        if (Protocol == "native") Native.Validate();
+        if (Native == null || Rdp == null || Storage == null || Hooks == null || Tunnels == null) throw new ArgumentException("Opzioni sessione mancanti.");
+        if (Protocol == "native") {Native.Validate();Storage.Validate(Native.Kind);}
+        if(Storage.Browser&&(Protocol!="native"||string.IsNullOrWhiteSpace(Username)||JumpHost.Length>0||KeyId.Length>0||Hooks.Count>0||Tunnels.Count>0))throw new ArgumentException("Browser storage: utente/access key richiesto, senza chiavi SSH, hook o tunnel.");
+        if(Storage.Browser){
+            if(Authentication!="password"||Native.Executable.Length>0||Native.ConfigFile.Length>0||Native.IdentityFile.Length>0||Native.ArgumentsJson!="[]"||Native.Target.Length>0||RequirePostQuantumKex||Subsystem.Length>0||StartupMacro!=null)throw new ArgumentException("Browser storage: usa i campi dedicati e il motore incluso, senza argomenti o config esterni.");
+            if(Native.Kind=="ftp"&&(string.IsNullOrWhiteSpace(Host)||Host.Length>255||Host.Any(char.IsWhiteSpace)||Host.Any(char.IsControl)||Host.StartsWith('-')||Host.Contains('/')||Host.Contains('\\')))throw new ArgumentException("Host FTP non valido.");
+            StorageFiles.Normalize(RemoteDirectory);
+        }
         if (Protocol == "rdp") Rdp.Validate(JumpHost);
         if (Authentication is not ("auto" or "password" or "key" or "keyboard-interactive" or "openssh-agent" or "pageant")) throw new ArgumentException("Metodo di autenticazione non supportato.");
         if(LocalShell is not("cmd" or "powershell" or "pwsh" or "wsl")||StartupDirectory==null||StartupDirectory.Length>4096||StartupDirectory.Any(char.IsControl)||StartupCommands==null||StartupCommands.Length>8192||StartupCommands.Any(c=>char.IsControl(c)&&c is not('\r' or '\n' or '\t'))||WslDistribution==null||WslDistribution.Length>256||WslDistribution.Any(char.IsControl)||WslDistribution.StartsWith('-'))throw new ArgumentException("Configurazione shell locale non valida.");
         StartupMacros.Validate(this);
         if(Hooks==null||Tunnels==null)throw new ArgumentException("Regole del profilo non valide.");
-        if((Protocol=="local"||Protocol=="native"&&Native.Kind is not("ssh" or "sftp"))&&(KeyId.Length>0||PasswordId.Length>0||JumpHost.Length>0||Tunnels.Count>0||Hooks.Any(h=>h.Enabled)))throw new ArgumentException("Una sessione locale non usa credenziali SSH, tunnel o hook remoti.");
-        if(Protocol=="native"&&(JumpHost.Length>0||Tunnels.Count>0||Hooks.Any(h=>h.Enabled)))throw new ArgumentException("Per i client nativi usa jump, tunnel e comandi nel config OpenSSH.");
+        if((Protocol=="local"||Protocol=="native"&&Native.Kind is not("ssh" or "sftp")&&!Storage.Browser)&&(KeyId.Length>0||PasswordId.Length>0||JumpHost.Length>0||Tunnels.Count>0||Hooks.Any(h=>h.Enabled)))throw new ArgumentException("Una sessione locale non usa credenziali SSH, tunnel o hook remoti.");
+        if(Protocol=="native"&&(JumpHost.Length>0||Tunnels.Count>0))throw new ArgumentException("Per i client nativi usa jump, tunnel e comandi nel config OpenSSH.");
         if (Protocol=="native" && Authentication is not("auto" or "key" or "password")) throw new ArgumentException("Per OpenSSH nativo scegli file config, chiave o password.");
         if (Authentication == "key" && string.IsNullOrWhiteSpace(KeyId)) throw new ArgumentException("Seleziona una chiave SSH.");
         if (Protocol is "rdp" or "vnc" && Authentication is not ("auto" or "password")) throw new ArgumentException("RDP e VNC richiedono il metodo Password.");
@@ -70,7 +77,8 @@ public sealed record ConnectionProfile
         if(Hooks==null||Hooks.Count>6)throw new ArgumentException("Massimo 6 hook per connessione.");
         foreach(var hook in Hooks)hook.Validate();
         if(Hooks.Select(h=>h.Phase+":"+h.Kind).Distinct().Count()!=Hooks.Count)throw new ArgumentException("Un solo hook per evento e destinazione locale/remota.");
-        if(Hooks.Any(h=>h.Enabled)&&Protocol is not("ssh" or "sftp"))throw new ArgumentException("Hook disponibili per SSH e SFTP.");
+        if(Hooks.Any(h=>h.Enabled)&&Protocol is not("ssh" or "sftp")&&!(Protocol=="native"&&Native.Kind is "ssh" or "sftp"))throw new ArgumentException("Hook disponibili per SSH e SFTP.");
+        if(Protocol=="native"&&Hooks.Any(h=>h.Enabled)&&Native.Executable.Length>0)throw new ArgumentException("Gli hook OpenSSH richiedono il client incluso.");
         foreach (var tunnel in Tunnels) tunnel.Validate();
         if (Tunnels.Select(t => t.Id).Distinct(StringComparer.Ordinal).Count() != Tunnels.Count) throw new ArgumentException("Le regole tunnel devono avere identificatori distinti.");
     }

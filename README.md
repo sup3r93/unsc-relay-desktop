@@ -8,7 +8,7 @@
 
 **The UNSC Relay source code and application were created by artificial intelligence (AI), based on the project owner’s requests and directions.**
 
-Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Source baseline: **0.2.16**; this repository reorganization does not publish a new installer.
+Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Stable version: **0.2.17**. See [release notes](apps/desktop/RELEASE-0.2.17.md).
 
 - `apps/desktop`: .NET solution, TypeScript/JavaScript interface, tests and installer.
 - `scripts`: build and release entry points from the repository root.
@@ -33,7 +33,7 @@ Dependency maintenance: Dependabot checks GitHub Actions, npm and NuGet weekly a
 
 **Il codice e l’applicazione UNSC Relay sono stati realizzati da intelligenza artificiale (IA), sulla base delle richieste e delle indicazioni del titolare del progetto.**
 
-Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Baseline del codice: **0.2.16**; questa riorganizzazione non pubblica un nuovo installer.
+Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Versione stabile: **0.2.17**. Vedi le [note di rilascio](apps/desktop/RELEASE-0.2.17.md).
 
 - `apps/desktop`: soluzione .NET, interfaccia TypeScript/JavaScript, test e installer.
 - `scripts`: comandi di build e rilascio dalla radice.

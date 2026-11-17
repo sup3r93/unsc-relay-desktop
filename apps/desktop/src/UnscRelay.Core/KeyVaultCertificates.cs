@@ -25,6 +25,7 @@ public sealed partial class KeyVault
             // SSH.NET verifies that this certificate certifies this exact private key.
             using var parsed = new PrivateKeyFile(keyStream, passphrase, certificateStream);
             var certificate = parsed.Certificate!;
+            CertificateSignatures.Verify(text, certificate);
             if ((uint)certificate.Type != 1) throw new ArgumentException("Per l'accesso serve un certificato utente, non host.");
             var maxUnix = (ulong)DateTimeOffset.MaxValue.ToUnixTimeSeconds();
             if (certificate.ValidAfterUnixSeconds > maxUnix) throw new ArgumentException("Validita del certificato non valida.");

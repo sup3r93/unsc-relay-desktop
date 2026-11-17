@@ -16,7 +16,7 @@ if (Test-Path -LiteralPath $taskLibrary) {
         if (!$taskCurrentFiles.Contains($taskRelative)) { $taskRetired += $taskRelative }
     }
 }
-$taskRetired = @($taskRetired | Sort-Object -Unique | Where-Object { !$taskCurrentFiles.Contains($_) })
+$taskRetired = @($taskRetired | Sort-Object -Unique | Where-Object { !$taskCurrentFiles.Contains($_) -and $_ -notmatch '^Tools\\Cygwin\\(tmp|home|var\\log)\\' })
 foreach ($taskRetiredFile in $taskRetired) {
     if ([IO.Path]::IsPathRooted($taskRetiredFile) -or $taskRetiredFile.Split('\') -contains '..' -or $taskRetiredFile.Contains('"')) { throw 'Elenco file dismessi non valido.' }
 }

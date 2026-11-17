@@ -1,13 +1,15 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.1"
+  #define AppVersion "0.2.17"
 #endif
 [Setup]
 AppId={{A81436B5-2F6E-4354-8EE3-B38552B6A18C}
 AppName=UNSC Relay
 AppVersion={#AppVersion}
 AppPublisher=Daniele / UNSC Relay
-AppPublisherURL=https://github.com/sup3r93/unsc-relay
-DefaultDirName=A:\UNSC Relay
+AppPublisherURL=https://github.com/sup3r93/unsc-relay-desktop
+DefaultDirName={localappdata}\Programs\UNSC Relay
+UsePreviousAppDir=yes
+DisableDirPage=auto
 DefaultGroupName=UNSC Relay
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
@@ -184,4 +186,12 @@ begin
   finally
     CloseHandle(Handle);
   end;
+end;
+
+{ Inno's temporary rename also needs room below the classic Windows path limit. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if Length(WizardDirValue) > 120 then
+    Result := 'La cartella scelta è troppo lunga per i componenti inclusi. Scegli un percorso più breve (massimo 120 caratteri).';
 end;

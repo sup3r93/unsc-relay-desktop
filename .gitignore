@@ -28,3 +28,5 @@ apps/desktop/src/UnscRelay.App/Web/media/*.mp3
 apps/desktop/src/UnscRelay.App/Web/media/*.m4a
 apps/desktop/src/UnscRelay.App/Web/media/*.mp4
 apps/desktop/scripts/cinematic/*.wav
+
+apps/desktop/scripts/.installer-verification-*.iss

@@ -1,5 +1,6 @@
  'use strict';
 const fileColumnDefinitions={
+ storage:[['name','Nome',320,160],['size','Dimensione',110,85],['type','Tipo',150,95],['modified','Data modifica',180,140]],
  local:[['name','Nome',320,160],['size','Dimensione',110,85],['type','Tipo',150,95],['modified','Data modifica',180,140],['attributes','Attributi',110,85]],
  remote:[['name','Nome',320,160],['size','Dimensione',110,85],['type','Tipo',150,95],['modified','Data modifica',180,140],['permissions','Permessi',120,100],['owner','Proprietario',120,95],['group','Gruppo',110,85]]
 };

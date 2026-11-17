@@ -14,12 +14,12 @@ jobs:
     name: Documentation checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python .github/scripts/check-readmes.py
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - run: node .github/scripts/test-community-policy.cjs
@@ -27,13 +27,30 @@ jobs:
     name: Desktop checks
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+          check-latest: false
+          skip-lts-prepass: true
       - run: dotnet build apps/desktop/UnscRelay.sln --configuration Release
       - name: Check encrypted vault migration
         run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --cloud-sync-only
+      - name: Check bounded private key parsing
+        run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --key-parsing-only
+      - name: Check SSH certificate verification
+        shell: pwsh
+        run: |
+          dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --native-host-certificates-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --native-certificates-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check native local hook lifecycle
+        run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --native-hooks-only
+      - name: Check native recovery policy
+        run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --native-recovery
+      - name: Check account transport and offline policy
+        run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --account-transport
       - name: Check account unlock when implemented
         shell: pwsh
         run: |
@@ -48,8 +65,8 @@ jobs:
       run:
         working-directory: apps/desktop
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           cache: npm
@@ -57,7 +74,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm test
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: desktop-ui-failures
@@ -68,8 +85,8 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - run: npm audit --audit-level=high --prefix apps/desktop

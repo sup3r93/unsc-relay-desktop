@@ -14,6 +14,7 @@ public partial class MainWindow
         public string Id { get; init; } = Guid.NewGuid().ToString("N");
         public string SessionId { get; set; } = "";
         public string ProfileId { get; init; } = "";
+        public string? NativeSnapshot { get; init; }
         public string Host { get; init; } = "";
         public int Port { get; init; }
         public string Username { get; init; } = "";
@@ -30,7 +31,7 @@ public partial class MainWindow
     int transferParallelism = 2;
     bool QueueBusy => recoveryTasks.Count>0 || fileJobs.Values.Any(j => j.Status is "In coda" or "Trasferimento" or "Pausa richiesta");
     object QueueSnapshot() => fileJobs.Values.Select(j => new { j.Id, j.SessionId, j.Host, j.Port, name = Path.GetFileName(j.Request.Local), j.Request.Local, j.Request.Remote, direction = j.Request.Upload ? "upload" : "download", j.Status, j.Progress, j.Error }).ToArray();
-    sealed record JobJournal(string Id, string ProfileId, string Host, int Port, string Username, TransferRequest Request, string Status, double Progress);
+    sealed record JobJournal(string Id, string ProfileId, string Host, int Port, string Username, TransferRequest Request, string Status, double Progress, string? NativeSnapshot=null);
     void LoadFileQueue()
     {
         var path = Path.Combine(dataPath, "transfers.json"); if (!File.Exists(path)) return;
@@ -39,7 +40,7 @@ public partial class MainWindow
             var journal = JsonSerializer.Deserialize<List<JobJournal>>(File.ReadAllText(path), ProfileStore.Json) ?? [];
             foreach (var j in journal.Take(5000))
                 if (!string.IsNullOrWhiteSpace(j.Host) && j.Port is > 0 and <= 65535 && Guid.TryParse(j.Id, out _) && j.Id == j.Request.Id && data.Profiles.Any(p => p.Id == j.ProfileId))
-                    fileJobs.TryAdd(j.Id, new() { Id = j.Id, ProfileId = j.ProfileId, Host = j.Host, Port = j.Port, Username = j.Username, Request = j.Request, Status = "In pausa", Progress = j.Progress });
+                    fileJobs.TryAdd(j.Id, new() { Id = j.Id, ProfileId = j.ProfileId, NativeSnapshot=j.NativeSnapshot, Host = j.Host, Port = j.Port, Username = j.Username, Request = j.Request, Status = "In pausa", Progress = j.Progress });
         }
         catch (Exception ex) when (ex is IOException or JsonException) { /* An invalid journal never starts work or changes profiles. */ }
     }
@@ -50,7 +51,7 @@ public partial class MainWindow
     }
     void EmitQueue(bool persist = true)
     {
-        try { if (persist) AtomicFile.Write(Path.Combine(dataPath, "transfers.json"), JsonSerializer.SerializeToUtf8Bytes(fileJobs.Values.Where(j => j.Status is not ("Completato" or "Saltato")).Select(j => new JobJournal(j.Id, j.ProfileId, j.Host, j.Port, j.Username, j.Request, j.Status, j.Progress)), ProfileStore.Json)); }
+        try { if (persist) AtomicFile.Write(Path.Combine(dataPath, "transfers.json"), JsonSerializer.SerializeToUtf8Bytes(fileJobs.Values.Where(j => j.Status is not ("Completato" or "Saltato")).Select(j => new JobJournal(j.Id, j.ProfileId, j.Host, j.Port, j.Username, j.Request, j.Status, j.Progress,j.NativeSnapshot)), ProfileStore.Json)); }
         catch (IOException) { Emit("notice", new { text = "Impossibile salvare la coda: i trasferimenti restano disponibili fino alla chiusura." }); }
         Emit("fileQueue", QueueSnapshot());
     }
@@ -63,7 +64,7 @@ public partial class MainWindow
             await Task.Run(()=>TransferWindow.Wait(job.Request.WindowStartMinute,job.Request.WindowEndMinute,token),token);
             await transferSlots.WaitAsync(token); acquired = true;
             if (!sessions.TryGetValue(job.SessionId, out var session)) throw new IOException("Riapri la sessione SFTP prima di trasferire.");
-            CheckJobEndpoint(job, session);if(automaticRecovery)ValidateRecovery(session,true);
+            CheckJobEndpoint(job, session);if(automaticRecovery){if(nativeStorageParents.TryGetValue(session.Id,out var nativeParent))ValidateNativeRecovery(nativeParent,session.Profile,true);else ValidateRecovery(session,true);}
             job.Status = "Trasferimento"; EmitQueue(); var last = DateTime.MinValue;
             var transferred = await session.TransferAdvancedAsync(job.Request with { Resume = resume, AutomaticRecovery=automaticRecovery }, (done, total) =>
             {
@@ -99,7 +100,7 @@ public partial class MainWindow
             int? TimeOption(string name){if(!payload.TryGetProperty(name,out var v)||v.ValueKind==JsonValueKind.Null||v.ValueKind==JsonValueKind.String&&v.GetString()=="")return null;return v.GetInt32();}
             var windowStart=TimeOption("windowStartMinute");var windowEnd=TimeOption("windowEndMinute");TransferWindow.Validate(windowStart,windowEnd);
             var bandwidth = I(payload, "bandwidthKiB", 0); if (bandwidth is < 0 or > 1048576) throw new ArgumentException("Limite banda non valido.");
-            var id = Guid.NewGuid().ToString("N"); return new FileJob { Id = id, SessionId = session.Id, ProfileId = session.Profile.Id, Host = session.Profile.Host, Port = session.Profile.Port, Username = session.Profile.Username, Request = new(id, local, remote, upload, conflict, Permissions: permissions, CreateParents: parents, Directory: isDirectory, BandwidthKiB: bandwidth, WindowStartMinute:windowStart,WindowEndMinute:windowEnd) };
+            var id = Guid.NewGuid().ToString("N"); return new FileJob { Id = id, SessionId = session.Id, ProfileId = session.Profile.Id, NativeSnapshot=session.Profile.Protocol=="native"?NativeRecovery.Snapshot(session.Profile):null, Host = session.Profile.Protocol=="native"?session.Profile.Native.Target:session.Profile.Host, Port = session.Profile.Protocol=="native"?(session.Profile.Native.Port>0?session.Profile.Native.Port:22):session.Profile.Port, Username = session.Profile.Username, Request = new(id, local, remote, upload, conflict, Permissions: permissions, CreateParents: parents, Directory: isDirectory, BandwidthKiB: bandwidth, WindowStartMinute:windowStart,WindowEndMinute:windowEnd) };
         }).ToArray();
         if (requests.GroupBy(j => j.Request.Upload ? j.Request.Remote : j.Request.Local, requests[0].Request.Upload ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) throw new IOException("Destinazione duplicata nella selezione.");
         foreach (var job in requests)
@@ -109,6 +110,11 @@ public partial class MainWindow
     }
     static void CheckJobEndpoint(FileJob job, SshSession session)
     {
+        if(job.NativeSnapshot!=null)
+        {
+            if(session.Profile.Protocol!="native"||job.NativeSnapshot!=NativeRecovery.Snapshot(session.Profile))throw new IOException("Il profilo OpenSSH è cambiato: ripresa rifiutata. Crea un nuovo trasferimento.");
+            return;
+        }
         if (!job.Host.Equals(session.Profile.Host, StringComparison.OrdinalIgnoreCase) || job.Port != session.Profile.Port || job.Username != session.Profile.Username)
             throw new IOException("Il profilo ora indica una macchina o un utente diverso dalla coda originale. Ripristina host, porta e utente precedenti oppure crea un nuovo trasferimento.");
     }
@@ -182,6 +188,7 @@ public partial class MainWindow
         public FileSystemWatcher? Watcher { get; set; }
         public bool Busy { get; set; }
         public bool AutoUpload { get; set; }
+        public string? NativeSnapshot { get; init; }
         public bool Dirty { get; set; }
         public bool AutoScheduled { get; set; }
         public int ExternalRevision { get; set; }
@@ -193,7 +200,7 @@ public partial class MainWindow
         var session = Session(payload); var remote = await session.ReadTextAsync(S(payload, "path"));
         var existing = editBuffers.Values.FirstOrDefault(e => e.SessionId == session.Id && e.Original.Path == remote.Path);
         if (existing != null) return new { existing.Id, existing.SessionId, existing.Original.Path, existing.Original.Text, existing.Original.Hash };
-        var edit = new EditBuffer { SessionId = session.Id, Original = remote }; editBuffers.Add(edit.Id, edit);
+        var edit = new EditBuffer { SessionId = session.Id, Original = remote, NativeSnapshot=session.Profile.Protocol=="native"?NativeRecovery.Snapshot(session.Profile):null }; editBuffers.Add(edit.Id, edit);
         return new { edit.Id, edit.SessionId, remote.Path, remote.Text, remote.Hash };
     }
     async Task SaveRemoteEditor(EditBuffer edit, string text, bool external)
@@ -208,6 +215,7 @@ public partial class MainWindow
             var bom = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }); var content = new UTF8Encoding(false, true).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
             var dir = Path.Combine(dataPath, "Editor"); Directory.CreateDirectory(dir); scratch = Path.Combine(dir, edit.Id + ".upload"); await File.WriteAllBytesAsync(scratch, bytes);
             if (!sessions.TryGetValue(edit.SessionId, out var session)) throw new IOException("La sessione SFTP è stata chiusa.");
+            if(edit.NativeSnapshot!=null&&edit.NativeSnapshot!=NativeRecovery.Snapshot(session.Profile))throw new IOException("Il profilo OpenSSH è cambiato: salvataggio rifiutato. Le modifiche locali sono conservate.");
             var transfer = new TransferRequest(Guid.NewGuid().ToString("N"), scratch, edit.Original.Path, true, "replace", ExpectedHash: edit.Original.Hash);
             try { await session.TransferAdvancedAsync(transfer, (_, _) => { }, CancellationToken.None); }
             catch { try { await session.DiscardPartialAsync(transfer); } catch { } throw; }
@@ -259,6 +267,24 @@ public partial class MainWindow
         editBuffers.Remove(id); edit.Watcher?.Dispose();
         // Keep external scratch copies: a still-open editor must not lose its unsaved buffer.
     }
+    static Task<RemoteText> ReadLocalComparison(string local) => Task.Run(() =>
+    {
+        var path = Path.GetFullPath(local); using var stream = File.OpenRead(path);
+        if (stream.Length > 2 * 1024 * 1024) throw new IOException("Confronto disponibile per file UTF-8 fino a 2 MiB ciascuno.");
+        using var bytes = new MemoryStream(); var buffer = new byte[65536]; int read;
+        while ((read = stream.Read(buffer)) > 0)
+        {
+            if (bytes.Length + read > 2 * 1024 * 1024) throw new IOException("Il file supera il limite del confronto.");
+            bytes.Write(buffer, 0, read);
+        }
+        var content = bytes.ToArray();
+        if (content.Contains((byte)0)) throw new IOException("Il confronto testuale non supporta file binari.");
+        var bom = content.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf });
+        string text;
+        try { text = new UTF8Encoding(false, true).GetString(content, bom ? 3 : 0, content.Length - (bom ? 3 : 0)); }
+        catch (DecoderFallbackException) { throw new IOException("Il confronto richiede un file di testo UTF-8 valido."); }
+        return new RemoteText(path, text, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)), bom);
+    });
     async Task<object?> FileAction(string action, JsonElement p)
     {
         switch (action)
@@ -275,15 +301,7 @@ public partial class MainWindow
             case "sftpHome": return Session(p).HomeDirectory;
             case "fileCompare":
                 var remoteText = await Session(p).ReadTextAsync(S(p, "remote"));
-                var localText = await Task.Run(() =>
-                {
-                    var path = Path.GetFullPath(S(p, "local")); using var stream = File.OpenRead(path);
-                    if (stream.Length > 2 * 1024 * 1024) throw new IOException("Confronto disponibile per file UTF-8 fino a 2 MiB ciascuno.");
-                    using var bytes = new MemoryStream(); var buffer = new byte[65536]; int read; while ((read = stream.Read(buffer)) > 0) { if (bytes.Length + read > 2 * 1024 * 1024) throw new IOException("Il file supera il limite del confronto."); bytes.Write(buffer, 0, read); }
-                    var content = bytes.ToArray(); if (content.Contains((byte)0)) throw new IOException("Il confronto testuale non supporta file binari.");
-                    var bom = content.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf });
-                    return new RemoteText(path, new UTF8Encoding(false, true).GetString(content, bom ? 3 : 0, content.Length - (bom ? 3 : 0)), Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)), bom);
-                });
+                var localText = await ReadLocalComparison(S(p, "local"));
                 return new { local = localText, remote = remoteText };
             case "sftpOperation":
                 if (QueueBusy || EditorsBusy) throw new IOException("Completa o metti in pausa i trasferimenti prima di modificare i file.");

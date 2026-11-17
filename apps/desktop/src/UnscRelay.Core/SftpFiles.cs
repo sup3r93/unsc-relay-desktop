@@ -21,6 +21,7 @@ public sealed partial class SshSession
 {
     readonly SemaphoreSlim _channelConnect = new(1, 1);
     Func<bool,SftpClient> _fileChannel = null!;
+    Func<CancellationToken,Task<SftpClient>>? _nativeFileChannel;
     Action<HostKeyEventArgs,bool> _fileTrust = null!;
     readonly Dictionary<string, (long Size, DateTime Time)> _transferSources = [];
     public string HomeDirectory => _sftp.WorkingDirectory;
@@ -31,6 +32,7 @@ public sealed partial class SshSession
         try
         {
             if (_disposed) throw new InvalidOperationException("Sessione chiusa.");
+            if(_nativeFileChannel!=null)return await _nativeFileChannel(token);
             channel = _fileChannel(automatic); channel.HostKeyReceived += (_, e) => _fileTrust(e,automatic);
             await channel.ConnectAsync(token); return channel;
         }

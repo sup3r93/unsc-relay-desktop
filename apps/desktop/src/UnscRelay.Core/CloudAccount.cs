@@ -60,9 +60,10 @@ public sealed class CloudAccountClient : IDisposable
     public const string Callback="http://127.0.0.1:48187/relay-callback/";
     private readonly AccountSyncStore storage;
     private readonly SemaphoreSlim authGate=new(1,1);
-    private readonly HttpClient http=new(new HttpClientHandler { AllowAutoRedirect=false }) { BaseAddress=new Uri("https://unsc.responda.eu/"), Timeout=TimeSpan.FromSeconds(30), MaxResponseContentBufferSize=64*1024*1024 };
+    private readonly HttpClient http;
     public AccountSyncState State { get; }
-    public CloudAccountClient(string directory) { storage=new(directory);State=storage.Load(); }
+    public CloudAccountClient(string directory) : this(directory,new HttpClientHandler { AllowAutoRedirect=false }) { }
+    internal CloudAccountClient(string directory,HttpMessageHandler handler) { storage=new(directory);State=storage.Load();http=new(handler){BaseAddress=new Uri("https://unsc.responda.eu/"),Timeout=TimeSpan.FromSeconds(30),MaxResponseContentBufferSize=64*1024*1024}; }
     private static OidcClient Client(IBrowser? browser=null)=>new(new OidcClientOptions { Authority=Authority,ClientId="unsc-desktop",RedirectUri=Callback,Scope="openid profile email",Browser=browser,LoadProfile=false });
     public void Save()=>storage.Save(State);
     public async Task LoginAsync(CancellationToken ct, IBrowser? browser=null, string action="login")
@@ -72,6 +73,7 @@ public sealed class CloudAccountClient : IDisposable
             if(action=="register"&&!await RegistrationAllowed(ct))throw new OnlineAccessException("Le registrazioni sono temporaneamente chiuse dall’amministratore.");
             var request=new LoginRequest();
             request.FrontChannelExtraParameters.Add("prompt",action=="register"?"create":"login");
+            if(action=="login")request.FrontChannelExtraParameters.Add("max_age","0");
             if(action is not("login" or "register")){
                 var required=DesktopAccountNavigation.Action(action)??throw new ArgumentException("Operazione account non valida.");
                 request.FrontChannelExtraParameters.Add("kc_action",required);request.FrontChannelExtraParameters.Add("max_age","0");
@@ -150,6 +152,7 @@ public sealed class CloudAccountClient : IDisposable
         }
         throw new OnlineAccessException("Accesso online non disponibile.");
     }
+    public async Task<byte[]> DeviceUnlock(Guid device,bool create,CancellationToken ct){using var response=await Send(create?HttpMethod.Post:HttpMethod.Get,"api/desktop/unlock/"+device.ToString("D"),create?new{}:null,ct);if(response.StatusCode==HttpStatusCode.NotFound)throw new OnlineAccessException("Collegamento di sicurezza del dispositivo non disponibile. L’archivio locale è conservato.");response.EnsureSuccessStatusCode();using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));var bytes=Convert.FromBase64String(json.RootElement.GetProperty("secret").GetString()!);if(bytes.Length!=32){CryptographicOperations.ZeroMemory(bytes);throw new CryptographicException("Risposta di sblocco non valida.");}return bytes;}
     public async Task<RemoteVault?> Read(CancellationToken ct)
     {
         using var response=await Send(HttpMethod.Get,"api/vault",null,ct);

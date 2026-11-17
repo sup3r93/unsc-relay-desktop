@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -28,11 +27,7 @@ public static class ExternalCertificates
         provider.Validate();var cert=CertificateRevocations.Parse(text);
         if("SHA256:"+cert.CertificateAuthorityKeyFingerPrint!=provider.AuthorityFingerprint)throw new CryptographicException("CA del certificato diversa dall'impronta configurata.");
         if(!cert.ValidPrincipals.Contains(provider.Principal)||cert.ValidAfterUnixSeconds>(ulong)now.ToUnixTimeSeconds()||cert.ValidBeforeUnixSeconds<=(ulong)now.AddMinutes(1).ToUnixTimeSeconds()||cert.ValidBeforeUnixSeconds>(ulong)now.AddHours(provider.Hours).AddMinutes(5).ToUnixTimeSeconds())throw new ArgumentException("Principal o validita del certificato non conformi alla richiesta.");
-        var signature=cert.Signature;if(signature.Length<4)throw new CryptographicException("Firma certificato non valida.");var nameSize=BinaryPrimitives.ReadInt32BigEndian(signature);if(nameSize<1||nameSize>100||nameSize>signature.Length-4)throw new CryptographicException("Firma certificato non valida.");var name=Encoding.ASCII.GetString(signature,4,nameSize);if(name=="ssh-rsa")throw new CryptographicException("La firma CA SHA-1 non e consentita.");
-        var info=new ConnectionInfo("localhost","verify",new NoneAuthenticationMethod("verify"));
-        if(!info.HostKeyAlgorithms.TryGetValue(name,out var factory))throw new CryptographicException("Firma CA non supportata dal motore.");
-        var bytes=Convert.FromBase64String(text.Trim().Split((char[]?)null,StringSplitOptions.RemoveEmptyEntries)[1]);var prefix=bytes.Length-signature.Length-4;
-        if(prefix<0||BinaryPrimitives.ReadInt32BigEndian(bytes.AsSpan(prefix,4))!=signature.Length||!bytes.AsSpan(prefix+4).SequenceEqual(signature)||!factory(cert.CertificateAuthorityKey).VerifySignature(bytes[..prefix],signature))throw new CryptographicException("Firma CA non valida.");
+        CertificateSignatures.Verify(text,cert);
     }
     public static async Task<KeyInfo> Issue(KeyVault vault,CertificateProvider provider,string directory,string passphrase="")
     {
