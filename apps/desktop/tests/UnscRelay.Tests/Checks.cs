@@ -7,7 +7,7 @@ internal static class Checks
 {
     public static async Task<int> Run(string[] args)
     {
-        var directory = Path.Combine(Path.GetTempPath(), "Relay-Tests-" + Guid.NewGuid().ToString("N"));
+        var directory = Directory.CreateTempSubdirectory("Relay-Tests-").FullName;
         Directory.CreateDirectory(directory); var passed = 0;
         void Assert(bool condition, string name) { if (!condition) throw new Exception(name); Console.WriteLine("PASS " + name); passed++; }
         void Reject<T>(Action action, string name) where T : Exception { try { action(); } catch (T) { Assert(true, name); return; } throw new Exception("Not rejected: " + name); }

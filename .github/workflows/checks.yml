@@ -57,7 +57,7 @@ jobs:
       - name: Check account workspaces, archive recovery and signed update policy
         shell: pwsh
         run: |
-          foreach ($mode in @('--account-workspaces','--archive-sharing','--archive-client','--personal-archive-recovery','--update-policy')) {
+          foreach ($mode in @('--local-data-files','--account-workspaces','--archive-sharing','--archive-client','--personal-archive-recovery','--update-policy')) {
             dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll $mode
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
