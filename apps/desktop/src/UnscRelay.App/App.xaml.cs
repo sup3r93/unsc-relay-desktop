@@ -10,5 +10,5 @@ public partial class App : Application
  catch{Shutdown(1);return;}
  ShutdownMode=ShutdownMode.OnLastWindowClose;
  }
- var window = new MainWindow(); MainWindow = window; window.Show(); }
+ try { var window = new MainWindow(); MainWindow = window; window.Show(); } catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException) { MessageBox.Show(ex.Message, "UNSC Relay · Cartella dati non disponibile", MessageBoxButton.OK, MessageBoxImage.Error); Shutdown(1); } }
 }
