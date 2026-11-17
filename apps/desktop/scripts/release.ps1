@@ -1,5 +1,8 @@
 param([Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
-      [Parameter(Mandatory)][string]$NotesPath)
+      [Parameter(Mandatory)][string]$NotesPath,
+      [ValidateSet('interface','features','security')][string[]]$Categories=@('features'),
+      [ValidateSet('normal','important','critical')][string]$SecurityLevel='normal',
+      [ValidatePattern('^\d+\.\d+\.\d+$')][string]$MinimumSupportedVersion='0.0.0')
 $ErrorActionPreference = 'Stop'
 $taskRepository = Split-Path $PSScriptRoot -Parent
 Push-Location $taskRepository
@@ -25,6 +28,8 @@ try {
         }
         if ((Get-Date) -lt $taskPublisher.NotBefore -or (Get-Date) -gt $taskPublisher.NotAfter) { throw 'Certificato non valido alla data corrente.' }
     } finally { $taskPublisher.Dispose() }
+    $taskPolicy=Join-Path $taskRepository 'artifacts\installer\UNSC-Relay-Update-Policy.json'
+    & (Join-Path $PSScriptRoot 'write-update-policy.ps1') -Version $Version -InstallerSha256 $taskExpected -PublisherCertificate (Join-Path $taskRepository 'src\UnscRelay.App\Assets\Publisher.cer') -OutputPath $taskPolicy -Categories $Categories -SecurityLevel $SecurityLevel -MinimumSupportedVersion $MinimumSupportedVersion
     # Use the existing Git credential broker only for publishing; never store this credential in the app or in files.
     $taskCredentialLines = "protocol=https`nhost=github.com`npath=sup3r93/unsc-relay-desktop.git`n`n" | git credential fill
     if ($LASTEXITCODE -ne 0) { throw 'Autenticazione GitHub non disponibile.' }
@@ -34,7 +39,7 @@ try {
     $taskApi = 'https://api.github.com/repos/sup3r93/unsc-relay-desktop'
     $taskBody = @{ tag_name = "v$Version"; target_commitish = $taskCommit; name = "UNSC Relay $Version"; body = (Get-Content -LiteralPath $NotesPath -Raw); draft = $true; prerelease = $false } | ConvertTo-Json
     $taskRelease = Invoke-RestMethod -Uri "$taskApi/releases" -Headers $taskHeaders -Method Post -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($taskBody))
-    foreach ($taskFile in @($taskInstaller, ($taskInstaller + '.sha256'), (Join-Path $taskRepository 'artifacts\UNSC-Relay-Native-Sources.zip'))) {
+    foreach ($taskFile in @($taskInstaller, ($taskInstaller + '.sha256'), $taskPolicy, (Join-Path $taskRepository 'artifacts\UNSC-Relay-Native-Sources.zip'))) {
         $taskName = [Uri]::EscapeDataString([IO.Path]::GetFileName($taskFile))
         $taskUpload = $taskRelease.upload_url.Split('{')[0] + '?name=' + $taskName
         $taskAsset = Invoke-RestMethod -Uri $taskUpload -Headers $taskHeaders -Method Post -ContentType 'application/octet-stream' -InFile $taskFile

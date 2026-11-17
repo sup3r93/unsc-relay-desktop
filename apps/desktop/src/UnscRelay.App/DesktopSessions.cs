@@ -126,9 +126,11 @@ public partial class MainWindow
     }
     async Task<object> ConnectDesktop(ConnectionProfile profile, string id)
     {
+        if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
         DesktopRoutes.Validate(profile, data.Profiles);
         var password = ConnectionPassword(profile);
         var route = await DesktopRoutes.OpenAsync(profile, data.Profiles, (p, host, targetPort) => CreateAuthenticatedSession(p, host, targetPort, Guid.NewGuid().ToString("N")));
+        if(CriticalUpdateRequired){route.Dispose();throw new OperationCanceledException("Aggiornamento critico richiesto.");}
         var endpoint = route.Host; var port = route.Port;
         var hostView = new WindowsFormsHost { Width = 800, Height = 500 }; DesktopSession? session = null;
         void Status(string text, bool connected) { if (session?.Disposed != true) Emit("desktopStatus", new { sessionId = id, text, connected, pending = text.StartsWith("RDP: connessione", StringComparison.Ordinal) }); }
@@ -151,10 +153,12 @@ public partial class MainWindow
                 control.Connected += (_, _) => Status("VNC connesso", true); control.ConnectionFailed += (_, _) => Status("Connessione VNC non riuscita: verifica password e compatibilità del server.", false); control.Closed += (_, _) => Status("VNC disconnesso", false);
                 var socket = new TcpClient { ReceiveTimeout = profile.ConnectTimeoutSeconds * 1000, SendTimeout = profile.ConnectTimeoutSeconds * 1000 }; session.Socket = socket;
                 await socket.ConnectAsync(endpoint, port).WaitAsync(TimeSpan.FromSeconds(profile.ConnectTimeoutSeconds));
+                if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
                 var options = new VncClientConnectOptions { Password = password.ToCharArray(), AutoReconnect = false, ShareDesktop = true };
                 try { await Task.Run(() => control.Client.Connect(socket.GetStream(), options)); }
                 finally { Array.Clear(options.Password); password = ""; }
             }
+            if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
             return new { sessionId = id, filesAvailable = false, desktop = true, pending = profile.Protocol == "rdp" };
         }
         catch

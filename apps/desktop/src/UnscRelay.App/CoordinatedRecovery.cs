@@ -50,6 +50,7 @@ public partial class MainWindow
     }
     void ValidateRecovery(SshSession previous, bool automatic)
     {
+        if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento di sicurezza richiesto.");
         var saved = data.Profiles.SingleOrDefault(p => p.Id == previous.Profile.Id) ?? throw new IOException("Profilo eliminato: apri una nuova connessione.");
         var current = saved with { Protocol = previous.Profile.Protocol };
         if (!sessionRouteSnapshots.TryGetValue(previous.Id, out var snapshot) || snapshot != RouteSnapshot(current)) throw new IOException("Profilo o jump host modificato: apri una nuova connessione. La coda resta in pausa.");

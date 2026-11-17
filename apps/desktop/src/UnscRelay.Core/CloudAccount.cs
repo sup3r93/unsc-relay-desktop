@@ -15,7 +15,9 @@ public sealed class AccountSyncState
 {
     public string Format { get; set; } = "unsc-account-v1";
     public string Owner { get; set; } = "";
+    public string ArchiveOwner { get; set; } = "";
     public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
     public string Subject { get; set; } = "";
     public string AccessToken { get; set; } = "";
     public string RefreshToken { get; set; } = "";
@@ -27,8 +29,10 @@ public sealed class AccountSyncState
     public SyncEnvelope? Header { get; set; }
 }
 public sealed record RemoteVault(long Revision, DateTime UpdatedAt, SyncEnvelope Envelope);
-public sealed record OnlineIdentity(string Owner, string Subject, string Name);
-public sealed class OnlineAccessException(string message) : Exception(message);
+public sealed record OnlineIdentity(string Owner, string Subject, string Name, string Email="");
+public class OnlineAccessException(string message,HttpStatusCode? status=null) : Exception(message){public HttpStatusCode? Status{get;}=status;}
+
+public sealed class PersonalArchiveChangedException():OnlineAccessException("L’archivio personale sincronizzato è cambiato. Apri Account e sincronizzazione e usa il recupero dalla copia locale verificata. Nessun dato viene sostituito automaticamente.");
 
 public sealed class AccountSyncStore(string directory)
 {
@@ -43,6 +47,7 @@ public sealed class AccountSyncStore(string directory)
         try {
             var state=JsonSerializer.Deserialize<AccountSyncState>(bytes,VaultSyncCrypto.Json)??throw new InvalidDataException("Account non valido.");
             if(state.Format!="unsc-account-v1" || state.Activated&&(state.Owner.Length!=64||state.Owner.Any(c=>!char.IsAsciiHexDigit(c))||string.IsNullOrWhiteSpace(state.Subject)))throw new InvalidDataException("Collegamento account non valido.");
+            if(state.ArchiveOwner.Length>0&&(state.ArchiveOwner.Length!=64||!state.ArchiveOwner.All(char.IsAsciiHexDigit)))throw new InvalidDataException("Namespace archivio non valido.");
             return state;
         }finally{CryptographicOperations.ZeroMemory(bytes);}
     }
@@ -54,7 +59,7 @@ public sealed class AccountSyncStore(string directory)
     }
 }
 
-public sealed class CloudAccountClient : IDisposable
+public sealed partial class CloudAccountClient : IDisposable
 {
     public const string Authority="https://unsc.responda.eu/identity/realms/unsc";
     public const string Callback="http://127.0.0.1:48187/relay-callback/";
@@ -66,12 +71,19 @@ public sealed class CloudAccountClient : IDisposable
     internal CloudAccountClient(string directory,HttpMessageHandler handler) { storage=new(directory);State=storage.Load();http=new(handler){BaseAddress=new Uri("https://unsc.responda.eu/"),Timeout=TimeSpan.FromSeconds(30),MaxResponseContentBufferSize=64*1024*1024}; }
     private static OidcClient Client(IBrowser? browser=null)=>new(new OidcClientOptions { Authority=Authority,ClientId="unsc-desktop",RedirectUri=Callback,Scope="openid profile email",Browser=browser,LoadProfile=false });
     public void Save()=>storage.Save(State);
+    public static string RememberedEmail(AccountSyncState state)
+    {
+        foreach(var value in new[]{state.Email,state.Name})
+            if(value is {Length:>0 and <=254}&&!value.Any(char.IsControl)&&System.Net.Mail.MailAddress.TryCreate(value,out var address)&&address.Address.Equals(value,StringComparison.OrdinalIgnoreCase))return value;
+        return "";
+    }
     public async Task LoginAsync(CancellationToken ct, IBrowser? browser=null, string action="login")
     {
         await authGate.WaitAsync(ct);
         try {
             if(action=="register"&&!await RegistrationAllowed(ct))throw new OnlineAccessException("Le registrazioni sono temporaneamente chiuse dall’amministratore.");
             var request=new LoginRequest();
+            var hint=RememberedEmail(State);if(action!="register"&&hint.Length>0)request.FrontChannelExtraParameters.Add("login_hint",hint);
             request.FrontChannelExtraParameters.Add("prompt",action=="register"?"create":"login");
             if(action=="login")request.FrontChannelExtraParameters.Add("max_age","0");
             if(action is not("login" or "register")){
@@ -83,6 +95,7 @@ public sealed class CloudAccountClient : IDisposable
             var identity=await Identity(login.AccessToken,ct);
             if(State.Owner.Length>0&&identity.Owner!=State.Owner)throw new OnlineAccessException("Questo archivio locale è già associato a un altro account. Accedi con l’account originale: non mescolerò i suoi dati.");
             State.Owner=identity.Owner;State.Subject=identity.Subject;State.Name=identity.Name;
+            State.Email=RememberedEmail(new AccountSyncState { Email=identity.Email,Name=identity.Name });
             State.AccessToken=login.AccessToken;State.RefreshToken=login.RefreshToken??"";State.TokenExpires=login.AccessTokenExpiration;State.Activated=true;Save();
         }finally{authGate.Release();}
     }
@@ -139,15 +152,15 @@ public sealed class CloudAccountClient : IDisposable
             State.TokenExpires=refreshed.AccessTokenExpiration;Save();return State.AccessToken;
         }finally{authGate.Release();}
     }
-    private async Task<HttpResponseMessage> Send(HttpMethod method,string path,object? value,CancellationToken ct)
+    private async Task<HttpResponseMessage> Send(HttpMethod method,string path,object? value,CancellationToken ct,long? expected=null)
     {
         for(var attempt=0;attempt<2;attempt++) {
             using var request=new HttpRequestMessage(method,path);request.Headers.Authorization=new("Bearer",await Token(ct));
             if(value is not null)request.Content=JsonContent.Create(value,options:VaultSyncCrypto.Json);
-            if(method==HttpMethod.Put)request.Headers.IfMatch.Add(new EntityTagHeaderValue("\""+State.Revision+"\""));
+            if(method==HttpMethod.Put)request.Headers.IfMatch.Add(new EntityTagHeaderValue("\""+(expected??State.Revision)+"\""));
             var response=await http.SendAsync(request,ct);
             if(response.StatusCode==HttpStatusCode.Unauthorized&&attempt==0){response.Dispose();State.TokenExpires=DateTimeOffset.MinValue;continue;}
-            if(response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden){response.Dispose();throw new OnlineAccessException("Accesso online non disponibile. Accedi di nuovo; la copia locale è conservata.");}
+            if(response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden){response.Dispose();throw new OnlineAccessException("Accesso online non disponibile. Accedi di nuovo; la copia locale è conservata.",response.StatusCode);}
             return response;
         }
         throw new OnlineAccessException("Accesso online non disponibile.");
@@ -171,6 +184,7 @@ public sealed class CloudAccountClient : IDisposable
         catch(Exception ex)when(ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentNullException)
         { throw new CryptographicException("Risposta di sblocco non valida. L’archivio locale è conservato.",ex); }
     }
+    public string SyncOwner=>State.ArchiveOwner.Length>0?State.ArchiveOwner:State.Owner;
     public async Task<RemoteVault?> Read(CancellationToken ct)
     {
         using var response=await Send(HttpMethod.Get,"api/vault",null,ct);
@@ -181,7 +195,8 @@ public sealed class CloudAccountClient : IDisposable
         if(doc.RootElement.GetProperty("envelope").GetProperty("version").GetInt32()!=2)throw new OnlineAccessException("Il sito contiene un vecchio pacchetto: scaricalo e conservalo prima di migrare l’archivio.");
         var remote=JsonSerializer.Deserialize<RemoteVault>(json,VaultSyncCrypto.Json)!;
         if(remote.Revision<1)throw new InvalidDataException("Revisione online non valida.");
-        VaultSyncCrypto.Validate(remote.Envelope,State.Owner);return remote;
+        if(remote.Envelope.Owner!=SyncOwner)throw new PersonalArchiveChangedException();
+        VaultSyncCrypto.Validate(remote.Envelope,SyncOwner);return remote;
     }
     public async Task<long?> Write(SyncEnvelope envelope,CancellationToken ct)
     {

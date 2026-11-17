@@ -61,6 +61,7 @@ public partial class MainWindow
         var acquired = false;
         try
         {
+            if(CriticalUpdateRequired)throw new OperationCanceledException();
             await Task.Run(()=>TransferWindow.Wait(job.Request.WindowStartMinute,job.Request.WindowEndMinute,token),token);
             await transferSlots.WaitAsync(token); acquired = true;
             if (!sessions.TryGetValue(job.SessionId, out var session)) throw new IOException("Riapri la sessione SFTP prima di trasferire.");
@@ -253,7 +254,7 @@ public partial class MainWindow
     }
     void ScheduleExternalSave(EditBuffer edit)
     {
-        if (!edit.AutoUpload || edit.AutoScheduled || !editBuffers.ContainsKey(edit.Id)) return;
+        if (CriticalUpdateRequired || !edit.AutoUpload || edit.AutoScheduled || !editBuffers.ContainsKey(edit.Id)) return;
         edit.AutoScheduled = true;
         _ = Run();
         async Task Run()

@@ -40,7 +40,7 @@ public partial class MainWindow
     object AccessBootstrap()
     {
         if(!AppLocked&&!AccountLocked)return Snapshot();
-        return new {account=CloudStatus(),data=new {profiles=Array.Empty<object>(),folders=Array.Empty<string>(),snippets=Array.Empty<object>(),workspaces=Array.Empty<object>(),settings=new {requireAppAuthentication=true,startupVolume=data.Settings.StartupVolume}},vault=new{exists=vault.Exists,unlocked=false,keys=Array.Empty<object>(),windowsHello=AccountHelloAllowed()},hostKeys=Array.Empty<object>(),version=CurrentVersion.ToString(),diagnostic=false,appLocked=AppLocked};
+        return new {account=CloudStatus(),data=new {profiles=Array.Empty<object>(),folders=Array.Empty<string>(),snippets=Array.Empty<object>(),workspaces=Array.Empty<object>(),settings=new {requireAppAuthentication=true,startupVolume=data.Settings.StartupVolume}},vault=new{exists=vault.Exists,unlocked=false,keys=Array.Empty<object>(),windowsHello=AccountHelloAllowed()},hostKeys=Array.Empty<object>(),version=CurrentVersion.ToString(),criticalUpdateRequired=CriticalUpdateRequired,diagnostic=false,appLocked=AppLocked};
     }
     async Task<object?> AccessAction(string action,JsonElement p)
     {
@@ -56,7 +56,8 @@ public partial class MainWindow
                 await VerifyLocalIdentity("Accesso a UNSC Relay","hello",true);
                 CompleteAppAuthentication(generation);return Snapshot();
             case "applicationExit":
-                if(!AppLocked&&!AccountLocked)throw new InvalidOperationException("Accesso già completato.");Close();return null;
+                explicitExit=true;
+                if(!CriticalUpdateRequired&&!AppLocked&&!AccountLocked)throw new InvalidOperationException("Accesso già completato.");Close();return null;
             case "accessSettings":
                 bool? requireApp=p.TryGetProperty("requireAppAuthentication",out var appFlag)?appFlag.GetBoolean():null;
                 bool? enableApi=p.TryGetProperty("assistantApiEnabled",out var apiFlag)?apiFlag.GetBoolean():null;
