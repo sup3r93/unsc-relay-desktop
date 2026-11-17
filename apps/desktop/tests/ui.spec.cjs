@@ -1075,7 +1075,7 @@ test('settings feature tabs pass WCAG AA checks and remain usable with doubled t
  await page.emulateMedia({reducedMotion:'reduce'});await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Funzionalità',exact:true}).click();
  const results=await new AxeBuilder({page}).include('#modal').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(results.violations).toEqual([]);
  await page.addStyleTag({content:':root{font-size:28px!important}'});await page.setViewportSize({width:740,height:900});
- for(const tab of ['Connessioni','File e trasferimenti','Sicurezza','Account e archivi','Automazioni','Applicazione']){await page.getByRole('tablist',{name:'Aree delle funzionalità'}).getByRole('tab',{name:tab,exact:true}).click();const bounds=await page.locator('.feature-panel:visible').boundingBox();expect(bounds.x+bounds.width).toBeLessThanOrEqual(740)}
+ for(const tab of ['Connessioni','File e trasferimenti','Sicurezza','Account e archivi','Automazioni','Applicazione']){await page.getByRole('tablist',{name:'Aree delle funzionalità'}).getByRole('tab',{name:tab,exact:true}).click();await expect.poll(async()=>{const bounds=await page.locator('.feature-panel:visible').boundingBox();return bounds.x+bounds.width}).toBeLessThanOrEqual(740);await expect.poll(()=>page.locator('#modal').evaluate(dialog=>dialog.scrollWidth-dialog.clientWidth)).toBeLessThanOrEqual(0)}
  await page.locator('#modal-close').focus();await page.keyboard.press('Escape');await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#settings-btn')).toBeFocused();
 });
 

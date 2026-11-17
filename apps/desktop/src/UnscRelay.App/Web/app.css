@@ -190,3 +190,8 @@ html:has(#access-gate),body:has(#access-gate){overflow:hidden;overscroll-behavio
 
 /* Folder actions are siblings of the native summary, never nested controls. */
 .folder-branch{position:relative}.folder-branch>summary.folder-label{min-height:2.75rem;padding-right:3rem}.folder-branch>.folder-manage{position:absolute;right:.25rem;top:.25rem;min-width:2.25rem;min-height:2.25rem;padding:.25rem}
+
+/* Narrow settings use one content column; category labels remain readable at 200% text. */
+.settings-nav button{min-width:0;white-space:normal;overflow-wrap:anywhere}
+.feature-panel{min-width:0;max-width:100%;overflow-wrap:anywhere}
+@media(max-width:850px){.settings-layout{display:flex;flex-direction:column;min-width:0}.settings-nav{flex-direction:row;flex-wrap:nowrap;border-right:0;border-bottom:1px solid var(--line);padding:10px;flex-shrink:0;max-height:30vh}.settings-nav button{flex:0 0 auto;max-width:16rem}.settings-content{flex:1;min-height:0}}

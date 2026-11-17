@@ -13,7 +13,7 @@ public partial class MainWindow
     UpdatePolicy? requiredUpdatePolicy;
     bool CriticalUpdateRequired=>requiredUpdatePolicy?.Blocks(CurrentVersion)==true;
     string PublisherPath=>Path.Combine(AppContext.BaseDirectory,"Assets","Publisher.cer");
-    string PolicyCachePath=>Path.Combine(rootDataPath,"update-policy.json");
+    string PolicyCachePath=>LocalDataFiles.Child(rootDataPath,"update-policy.json");
     void InitializeBackgroundLifecycle()
     {
         if(smokeTest)return;
@@ -26,10 +26,10 @@ public partial class MainWindow
         try
         {
             FolderSync.CheckLocalParents(PolicyCachePath);
-            if(File.Exists(PolicyCachePath)&&new FileInfo(PolicyCachePath).Length<=32768)
-            {using var certificate=X509CertificateLoader.LoadCertificateFromFile(PublisherPath);requiredUpdatePolicy=UpdatePolicy.Verify(File.ReadAllText(PolicyCachePath),certificate);}
+            if(File.Exists(PolicyCachePath))
+            {using var certificate=X509CertificateLoader.LoadCertificateFromFile(PublisherPath);requiredUpdatePolicy=UpdatePolicy.Verify(System.Text.Encoding.UTF8.GetString(LocalDataFiles.Read(rootDataPath,"update-policy.json",32768)),certificate);}
         }
-        catch(Exception ex)when(ex is UnauthorizedAccessException or IOException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or FormatException){ /* Invalid local metadata never authorises an update or a lock. */ }
+        catch(Exception ex)when(ex is UnauthorizedAccessException or IOException or InvalidDataException or System.Security.Cryptography.CryptographicException or System.Text.Json.JsonException or FormatException){ /* Invalid local metadata never authorises an update or a lock. */ }
         backgroundUpdateTimer.Tick+=async(_,_)=>await CheckBackgroundUpdates(false);backgroundUpdateTimer.Start();
     }
     void RestoreRelay(){Show();if(WindowState==WindowState.Minimized)WindowState=WindowState.Normal;Activate();if(CriticalUpdateRequired)Emit("updateAvailable",new{release=update,required=true});}
@@ -63,9 +63,7 @@ public partial class MainWindow
         if(requiredUpdatePolicy==null||Version.Parse(policy.MinimumSupportedVersion)>Version.Parse(requiredUpdatePolicy.MinimumSupportedVersion))
         {
             requiredUpdatePolicy=policy;
-            FolderSync.CheckLocalParents(PolicyCachePath);var temporary=PolicyCachePath+"."+Guid.NewGuid().ToString("N")+".tmp";
-            try{using(var file=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)){using var writer=new StreamWriter(file);writer.Write(release.SignedPolicy);}FolderSync.CheckLocalParents(PolicyCachePath);File.Move(temporary,PolicyCachePath,true);}
-            finally{if(File.Exists(temporary))File.Delete(temporary);}
+            LocalDataFiles.Write(rootDataPath,"update-policy.json",System.Text.Encoding.UTF8.GetBytes(release.SignedPolicy!));
         }
     }
     async Task<UpdateRelease?> CheckForUpdates()

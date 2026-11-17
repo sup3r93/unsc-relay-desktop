@@ -5,20 +5,20 @@ public sealed record RememberedAccount(Guid Id,string Owner,string Email,string 
 public sealed class AccountWorkspaceIndex {public int Version{get;set;}=1;public Guid Active{get;set;}public List<RememberedAccount> Accounts{get;set;}=[];}
 public sealed class AccountWorkspaces(string root)
 {
- string FilePath=>Path.Combine(Path.GetFullPath(root),"accounts.dpapi");
+ string FilePath=>LocalDataFiles.Child(root,"accounts.dpapi");
  public AccountWorkspaceIndex Load()
  {
   FolderSync.CheckLocalParents(root);if(!File.Exists(FilePath))return new();if(File.GetAttributes(FilePath).HasFlag(FileAttributes.ReparsePoint)||new FileInfo(FilePath).Length>256*1024)throw new InvalidDataException("Elenco account non valido. I dati non sono stati modificati.");
-  var bytes=UpdateTokenStore.Transform(File.ReadAllBytes(FilePath),true);try{var value=JsonSerializer.Deserialize<AccountWorkspaceIndex>(bytes,ProfileStore.Json)??throw new InvalidDataException("Elenco account non valido.");Validate(value);return value;}finally{CryptographicOperations.ZeroMemory(bytes);}
+  var bytes=UpdateTokenStore.Transform(LocalDataFiles.Read(root,"accounts.dpapi",256*1024),true);try{var value=JsonSerializer.Deserialize<AccountWorkspaceIndex>(bytes,ProfileStore.Json)??throw new InvalidDataException("Elenco account non valido.");Validate(value);return value;}finally{CryptographicOperations.ZeroMemory(bytes);}
  }
  static void Validate(AccountWorkspaceIndex index)
  {
   if(index.Version!=1||index.Accounts==null||index.Accounts.Count>20||index.Accounts.Any(a=>a==null||a.Owner==null||a.Email==null||a.Name==null||a.Owner.Length!=0&&(a.Owner.Length!=64||!a.Owner.All(char.IsAsciiHexDigit))||a.Email.Length>254||a.Name.Length>254||a.Email.Any(char.IsControl)||a.Name.Any(char.IsControl))||index.Accounts.Select(a=>a.Id).Distinct().Count()!=index.Accounts.Count||index.Active!=Guid.Empty&&!index.Accounts.Any(a=>a.Id==index.Active))throw new InvalidDataException("Elenco account non valido.");
  }
- public void Save(AccountWorkspaceIndex index){Validate(index);FolderSync.CheckLocalParents(root);if(File.Exists(FilePath)&&File.GetAttributes(FilePath).HasFlag(FileAttributes.ReparsePoint))throw new IOException("L’elenco account non può essere un collegamento.");var bytes=JsonSerializer.SerializeToUtf8Bytes(index,ProfileStore.Json);try{AtomicFile.Write(FilePath,UpdateTokenStore.Transform(bytes,false));}finally{CryptographicOperations.ZeroMemory(bytes);}}
+ public void Save(AccountWorkspaceIndex index){Validate(index);FolderSync.CheckLocalParents(root);if(File.Exists(FilePath)&&File.GetAttributes(FilePath).HasFlag(FileAttributes.ReparsePoint))throw new IOException("L’elenco account non può essere un collegamento.");var bytes=JsonSerializer.SerializeToUtf8Bytes(index,ProfileStore.Json);try{LocalDataFiles.Write(root,"accounts.dpapi",UpdateTokenStore.Transform(bytes,false));}finally{CryptographicOperations.ZeroMemory(bytes);}}
  public string DirectoryFor(Guid id)
  {
-  var path=id==Guid.Empty?Path.GetFullPath(root):Path.Combine(Path.GetFullPath(root),"Accounts",id.ToString("N"));FolderSync.CheckLocalParents(path);return path;
+  var path=id==Guid.Empty?LocalDataFiles.Root(root):LocalDataFiles.Child(root,"Accounts/"+id.ToString("N"));FolderSync.CheckLocalParents(path);return path;
  }
  public string ActiveDirectory()=>DirectoryFor(Load().Active);
  public void Remember(AccountSyncState state)

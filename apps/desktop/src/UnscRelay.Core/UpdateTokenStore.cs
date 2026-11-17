@@ -8,7 +8,7 @@ namespace UnscRelay.Core;
 /// <summary>GitHub-only credential, protected for the current Windows user; never part of profile exports.</summary>
 public sealed class UpdateTokenStore(string directory)
 {
-    private string PathName => Path.Combine(directory, "github-token.dpapi");
+    private string PathName => LocalDataFiles.Child(directory, "github-token.dpapi");
     public bool Exists => File.Exists(PathName);
     public void Save(string token)
     {
@@ -16,14 +16,13 @@ public sealed class UpdateTokenStore(string directory)
         if (token.Length is < 10 or > 4096 || token.Any(char.IsWhiteSpace) || token.Any(char.IsControl))
             throw new ArgumentException("Token GitHub non valido.");
         var bytes = Encoding.UTF8.GetBytes(token);
-        try { AtomicFile.Write(PathName, Transform(bytes, false)); }
+        try { LocalDataFiles.Write(directory, "github-token.dpapi", Transform(bytes, false)); }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
     public string Read()
     {
         if (!Exists) return "";
-        if (new FileInfo(PathName).Length > 16384) throw new InvalidDataException("Token salvato non valido. Rimuovilo e inseriscilo nuovamente.");
-        var clear = Transform(File.ReadAllBytes(PathName), true);
+        var clear = Transform(LocalDataFiles.Read(directory, "github-token.dpapi", 16384), true);
         try { return Encoding.UTF8.GetString(clear); }
         finally { CryptographicOperations.ZeroMemory(clear); }
     }

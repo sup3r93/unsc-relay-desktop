@@ -1,3 +1,4 @@
+if(args.Length==1&&args[0]=="--local-data-files")return LocalDataFileChecks.Run();
 if(args.Length==1&&args[0]=="--personal-archive-recovery")return await PersonalArchiveRecoveryChecks.Run();
 if(args.Length==1&&args[0]=="--update-policy")return UpdatePolicyChecks.Run();
 if(args.Length==1&&args[0]=="--archive-client")return await ArchiveClientChecks.Run();
