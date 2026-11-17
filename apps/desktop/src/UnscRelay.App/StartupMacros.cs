@@ -18,6 +18,7 @@ public partial class MainWindow
     }
     async Task RunStartupMacro(SshSession session,string? command)
     {
+        if(CriticalUpdateRequired)return;
         if(command==null)return;
         try{if(!session.CanWrite)throw new InvalidOperationException("Il terminale non è disponibile.");await session.WriteInputAsync(command.Replace("\n","\r").TrimEnd('\r')+"\r");Emit("notice",new{text="Macro di avvio inviata: "+session.Profile.StartupMacro?.Name+". L’esito dei comandi è nel terminale."});}
         catch(Exception ex) when(ex is InvalidOperationException or System.IO.IOException or Renci.SshNet.Common.SshException){Emit("notice",new{text="Macro di avvio non completata: "+ex.Message+". Non verrà ripetuta automaticamente."});}

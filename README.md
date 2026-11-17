@@ -8,14 +8,14 @@
 
 **The UNSC Relay source code and application were created by artificial intelligence (AI), based on the project owner’s requests and directions.**
 
-Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Stable version: **0.2.18**. See [release notes](apps/desktop/RELEASE-0.2.18.md).
+Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Stable version: **0.2.19**. See [release notes](apps/desktop/RELEASE-0.2.19.md).
 
 - `apps/desktop`: .NET solution, TypeScript/JavaScript interface, tests and installer.
 - `scripts`: build and release entry points from the repository root.
 - `main`: stable source, protected by review and additional checks.
 - `dev`: development and automated checks. No beta or prerelease distribution.
 
-The website, API and infrastructure are maintained separately by the owner. Initial app sign-in requires a personal account; website administrator accounts are not allowed. The account/manual-Hello sign-in changes are under development on `dev` and have not been shipped.
+The website, API and infrastructure are maintained separately by the owner. Initial app sign-in requires a personal account; website administrator accounts are not allowed. Online sign-in uses account 2FA; offline Windows Hello must be enabled manually for the selected account and PC.
 
 Build with `dotnet build apps/desktop/UnscRelay.sln`. For UI tests, run `npm ci` and `npm test` in `apps/desktop` after installing the Playwright browser. [Development guide](apps/desktop/README.md) · [Contributing and branches](CONTRIBUTING.md) · [Security](SECURITY.md).
 
@@ -27,20 +27,24 @@ Halo, UNSC and related trademarks belong to their respective owners. This indepe
 
 Dependency maintenance: Dependabot checks GitHub Actions, npm and NuGet weekly and opens grouped PRs against `dev`, with at most one open PR per ecosystem. Vulnerability alerts are enabled; automatic security PRs to the default `main` branch remain disabled to preserve the dev-only contribution path. Required verification remains enabled on PRs and pushes to main/dev; concurrent superseded runs are cancelled. CodeQL analyzes the public repository using standard runners. No automatic merge or paid security subscription is enabled.
 
+### Release 0.2.19
+
+This release adds remembered account selection, separate encrypted account workspaces, device-bound archive key sharing, owner-managed read/write permissions, readable modal notifications, accessible feature tabs, and configurable close-to-notification-area behavior. Update checks can run at startup and every 24 hours while the app remains open. Categories distinguish interface, features and security changes. Mandatory security requirements are accepted only from publisher-signed metadata bound to the installer version and SHA-256 digest. Critical requirements remain enforced offline after they have been verified. Existing clients gain this enforcement after installing a version that supports it.
+
 ## Italiano
 
 **Le pull request della community devono essere dirette a `dev`. Solo il titolare può proporre modifiche a `main`.** [Guida ai contributi](CONTRIBUTING.md) · [Segnala un bug o proponi una funzionalità](https://github.com/sup3r93/unsc-relay-desktop/issues/new/choose)
 
 **Il codice e l’applicazione UNSC Relay sono stati realizzati da intelligenza artificiale (IA), sulla base delle richieste e delle indicazioni del titolare del progetto.**
 
-Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Versione stabile: **0.2.18**. Vedi le [note di rilascio](apps/desktop/RELEASE-0.2.18.md).
+Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Versione stabile: **0.2.19**. Vedi le [note di rilascio](apps/desktop/RELEASE-0.2.19.md).
 
 - `apps/desktop`: soluzione .NET, interfaccia TypeScript/JavaScript, test e installer.
 - `scripts`: comandi di build e rilascio dalla radice.
 - `main`: codice stabile, protetto da revisione e controlli aggiuntivi.
 - `dev`: sviluppo e verifiche automatiche. Nessuna release beta o prerelease.
 
-Sito, API e infrastruttura sono mantenuti separatamente dal titolare. Il primo accesso dell’app richiede un account personale; gli account amministrativi del sito non sono ammessi. Le modifiche al nuovo accesso account/Hello sono in sviluppo su `dev`, non ancora distribuite.
+Sito, API e infrastruttura sono mantenuti separatamente dal titolare. Il primo accesso dell’app richiede un account personale; gli account amministrativi del sito non sono ammessi. L’accesso online usa la 2FA dell’account; Windows Hello offline va abilitato manualmente per l’account e il PC selezionati.
 
 Compilazione: `dotnet build apps/desktop/UnscRelay.sln`. Test UI: `npm ci` e `npm test` da `apps/desktop`, dopo aver installato il browser Playwright. [Guida di sviluppo](apps/desktop/README.md) · [Contributi e branch](CONTRIBUTING.md) · [Sicurezza](SECURITY.md).
 
@@ -51,3 +55,7 @@ Le tracce audio e i filmati personali non sono inclusi nel repository pubblico. 
 Halo, UNSC e i relativi marchi appartengono ai rispettivi titolari. Progetto indipendente, non ufficiale, non affiliato né approvato da Microsoft o Halo Studios.
 
 Manutenzione dipendenze: Dependabot controlla GitHub Actions, npm e NuGet ogni settimana e apre PR raggruppate verso `dev`, al massimo una aperta per ecosistema. Gli avvisi di vulnerabilità sono attivi; le PR automatiche di sicurezza verso il ramo predefinito `main` restano disattivate per mantenere il percorso dei contributi su dev. Le verifiche obbligatorie restano attive sulle PR e sugli invii a main/dev; le esecuzioni superate vengono annullate. CodeQL analizza il repository pubblico su runner standard. Nessuna unione automatica o sottoscrizione di sicurezza a pagamento attiva.
+
+### Versione 0.2.19
+
+Questa versione aggiunge selezione degli account ricordati, spazi cifrati separati per account, condivisione delle chiavi legata ai dispositivi, permessi di lettura/scrittura gestiti dal titolare, notifiche leggibili sulle finestre, schede funzionalità accessibili e chiusura configurabile nell’area di notifica. I controlli aggiornamenti possono avvenire all’avvio e ogni 24 ore mentre l’app resta aperta. Le categorie distinguono grafica, funzionalità e sicurezza. I requisiti obbligatori sono accettati soltanto da metadati firmati dal produttore, legati alla versione e al digest SHA-256 dell’installer. Dopo la verifica, i requisiti critici restano applicati anche offline. I client precedenti acquisiscono questo controllo installando una versione che lo supporta.

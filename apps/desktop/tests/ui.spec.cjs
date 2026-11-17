@@ -33,10 +33,19 @@ test.beforeEach(async ({ page, context }) => {
         if(action==='audioSettings'){state.data.settings.appMusicEnabled=payload.enabled;state.data.settings.appMusicVolume=payload.volume;if('startupVolume'in payload)state.data.settings.startupVolume=payload.startupVolume;if('shutdownVolume'in payload)state.data.settings.shutdownVolume=payload.shutdownVolume;result=state;}
         if(action==='editorDetectProgram'){state.data.settings.externalEditor='C:\\Fixture\\Notepad++\\notepad++.exe';state.data.settings.editorPreference='auto';result=state;}
         if(action==='editorChooseProgram'){state.data.settings.externalEditor='C:\\Fixture\\editor.exe';result=state;}if(action==='editorResetProgram'){state.data.settings.externalEditor='';result=state;}
+        if(action==='lifecycleSettings'){state.data.settings={...state.data.settings,...payload};result=state;}
         if(action==='settings'){state.data.settings.autoLockMinutes=payload.autoLockMinutes;result=state;}
         if(action==='musicSet'){state.data.settings.appMusicEnabled=payload.enabled;result=state;}
         if(action==='accessSettings'){state.data.settings={...state.data.settings,...payload};result=state;}
         if(action==='vaultRevealPrivate'){result={text:'-----BEGIN PRIVATE KEY-----\nFIXTURE-ONLY\n-----END PRIVATE KEY-----'};}
+        if(action==='workspaceList')result=window.fixtureAccounts||[];
+        if(action==='workspaceSwitch'||action==='workspaceAdd'||action==='workspaceForget')result=true;
+        if(action==='archiveList')result=window.fixtureArchives||[{id:'11111111-2222-4333-8444-555555555555',name:'Archivio team',ownerAccount:'A'.repeat(64),archiveOwner:'C'.repeat(64),access:'owner',version:1,ownerName:'fixture@example.invalid'}];
+        if(action==='archiveRead'){const archive=(window.fixtureArchives||[{id:'11111111-2222-4333-8444-555555555555',name:'Archivio team',access:'owner'}]).find(a=>a.id===payload.archiveId);result={archive,revision:3,records:[{id:'record-fixture',name:'Password demo',comment:'Nota di prova',kind:'password'}],profiles:[{name:'Server demo',protocol:'SSH',host:'fixture.invalid',port:22}]};}
+        if(action==='archiveMembers')result=[{account:'A'.repeat(64),email:'owner@example.invalid',access:'write'},{account:'B'.repeat(64),email:'reader@example.invalid',access:'read'}];
+        if(action==='archivePrepare'||action==='archiveAuthorize'||action==='archiveRevoke'||action==='archiveCopySecret'||action==='archiveUpdateRecord'||action==='archiveRecover')result=true;
+        if(action==='archiveShare')result={ready:true,message:'Archivio condiviso e dispositivi autorizzati.'};
+        if(action==='archiveTransfer')result=false;
         if(action==='accountAvailability')result={registrationAllowed:false};
         if(action==='accountProfile')result={username:'fixture',firstName:'Fixture',lastName:'User',email:'fixture@example.com',emailVerified:true};
         if(action==='accountSecurity')result=state;
@@ -80,7 +89,7 @@ test.beforeEach(async ({ page, context }) => {
         if(action==='editorOpen')result={id:'fixture-edit',sessionId:payload.sessionId,path:payload.path,text:'hello\nremote file\n',hash:'fixture-hash'};
         if(action==='editorSave')result=null;
         if (action === 'sftpList') result = window.fixtureRemoteFiles || [{ name: '<img src=x onerror=alert(1)>', path: '/safe', directory: false, size: 24, modified: '2026-01-01' }];
-        if (action === 'checkUpdates') result = { version: 'v0.2.0', notes: '<script>test</script>', fileName: 'test.exe' };
+        if (action === 'checkUpdates') result = window.fixtureUpdateRelease || { version: 'v0.2.0', notes: '<script>test</script>', fileName: 'test.exe' };
         if (action === 'agentList') result = [];
         if(action==='updateTokenStatus')result={saved:!!window.fixtureTokenSaved};
         if(action==='updateTokenSave'){window.fixtureTokenSaved=true;result={saved:true}}
@@ -211,7 +220,7 @@ test('key manager and settings expose actual development state', async ({ page }
   await page.locator('#modal-close').click();
   await page.locator('#settings-btn').click();
   await page.getByRole('tab',{name:'Funzionalità',exact:true}).click();
-  await expect(page.locator('#modal-body')).toContainText('IN SVILUPPO');
+  await expect(page.locator('#modal-body')).toContainText('Non disponibile in questa versione');
   await expect(page.locator('#modal-body')).toContainText('RDP/VNC');
   await page.locator('#modal-close').click();
   await page.screenshot({ path: 'artifacts/ui-home.png', fullPage: true });
@@ -1034,4 +1043,99 @@ test('native advanced follow directory ignores other terminals of the same profi
  expect(await page.evaluate(ids=>panes.get(ids.files).remotePath,ids)).toBe('/home/test');
  await page.evaluate(ids=>panes.get(ids.first).term.write('\x1b]7;file://fixture/right-terminal\x07'),ids);
  await expect(page.getByLabel('Cartella remota',{exact:true})).toHaveValue('/right-terminal');
+});
+
+
+test('notices remain in the top layer above settings and survive closing its dialog',async({page})=>{
+ await page.locator('#settings-btn').click();await page.evaluate(()=>toast('Impostazioni salvate correttamente'));
+ await expect(page.locator('#modal #toasts .toast')).toHaveText('Impostazioni salvate correttamente');
+ expect(await page.locator('#toasts').evaluate(el=>el.matches(':popover-open'))).toBe(true);
+ expect(await page.locator('.toast').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(32, 48, 36)');
+ expect(await page.locator('.toast').evaluate(el=>getComputedStyle(el).opacity)).toBe('1');
+ await page.screenshot({path:'artifacts/ui-toast-settings.png'});
+ await page.locator('#modal-close').click();await expect(page.locator('body > #toasts .toast')).toBeVisible();
+ await page.locator('#settings-btn').click();await expect(page.locator('#modal #toasts .toast')).toBeVisible();
+ expect(await page.locator('#toasts').evaluate(el=>el.matches(':popover-open'))).toBe(true);
+});
+test('feature areas expose every capability once with accessible independent tabs',async({page})=>{
+ await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Funzionalità',exact:true}).click();
+ const nav=page.getByRole('tablist',{name:'Aree delle funzionalità'});await expect(nav.getByRole('tab')).toHaveCount(6);
+ const labels=['Connessioni','File e trasferimenti','Sicurezza','Account e archivi','Automazioni','Applicazione'];const names=[];
+ for(const label of labels){await nav.getByRole('tab',{name:label,exact:true}).click();await expect(page.locator('.feature-panel:visible')).toHaveCount(1);await expect(nav.getByRole('tab',{name:label,exact:true})).toHaveAttribute('aria-selected','true');names.push(...await page.locator('.feature-panel:visible .feature-capability>span').allTextContents())}
+ expect(new Set(names).size).toBe(37);expect(names.length).toBe(37);
+ await nav.getByRole('tab',{name:'Connessioni',exact:true}).focus();await page.keyboard.press('ArrowRight');await expect(nav.getByRole('tab',{name:'File e trasferimenti',exact:true})).toBeFocused();
+ await page.keyboard.press('End');await expect(nav.getByRole('tab',{name:'Applicazione',exact:true})).toBeFocused();await page.keyboard.press('Home');await expect(nav.getByRole('tab',{name:'Connessioni',exact:true})).toBeFocused();
+ for(const width of [1480,900,640]){await page.setViewportSize({width,height:900});await nav.getByRole('tab',{name:'Sicurezza',exact:true}).click();const box=await page.locator('.feature-panel:visible').boundingBox();expect(box.x).toBeGreaterThanOrEqual(0);expect(box.x+box.width).toBeLessThanOrEqual(width);await expect(page.getByText('Non disponibile in questa versione',{exact:true})).toBeVisible()}
+ await page.setViewportSize({width:1480,height:920});await page.screenshot({path:'artifacts/ui-feature-areas.png'});
+});
+
+
+test('settings feature tabs pass WCAG AA checks and remain usable with doubled text',async({page})=>{
+ const {default:AxeBuilder}=require('@axe-core/playwright');
+ await page.emulateMedia({reducedMotion:'reduce'});await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Funzionalità',exact:true}).click();
+ const results=await new AxeBuilder({page}).include('#modal').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(results.violations).toEqual([]);
+ await page.addStyleTag({content:':root{font-size:28px!important}'});await page.setViewportSize({width:740,height:900});
+ for(const tab of ['Connessioni','File e trasferimenti','Sicurezza','Account e archivi','Automazioni','Applicazione']){await page.getByRole('tablist',{name:'Aree delle funzionalità'}).getByRole('tab',{name:tab,exact:true}).click();const bounds=await page.locator('.feature-panel:visible').boundingBox();expect(bounds.x+bounds.width).toBeLessThanOrEqual(740)}
+ await page.locator('#modal-close').focus();await page.keyboard.press('Escape');await expect(page.locator('#modal')).not.toBeVisible();await expect(page.locator('#settings-btn')).toBeFocused();
+});
+
+
+test('all settings categories and the shell expose accessible controls and contrast',async({page})=>{
+ const {default:AxeBuilder}=require('@axe-core/playwright');
+ let results=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(results.violations).toEqual([]);
+ await page.locator('#settings-btn').click();
+ for(const name of ['Account e sincronizzazione','Generali','Accesso','ChatGPT','Editor','Audio','Funzionalità']){
+  await page.getByRole('tablist',{name:'Categorie impostazioni'}).getByRole('tab',{name,exact:true}).click();
+  results=await new AxeBuilder({page}).include('#modal').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(results.violations, name).toEqual([]);
+ }
+});
+
+
+test('archive manager separates owner controls and reader access with keyboard and readable dialogs',async({page})=>{
+ const {default:AxeBuilder}=require('@axe-core/playwright');await page.emulateMedia({reducedMotion:'reduce'});
+ await page.evaluate(()=>{fixtureState.account={linked:true,owner:'A'.repeat(64)};fixtureState.vault.unlocked=true;archivesDialog()});
+ await expect(page.getByRole('heading',{name:'Archivi collegati',exact:true})).toBeVisible();await page.getByRole('button',{name:'Apri archivio',exact:true}).click();await expect(page.getByRole('button',{name:'Copia password',exact:true})).toBeVisible();await expect(page.getByLabel('Nuova password',{exact:true})).toHaveAttribute('autocomplete','new-password');
+ await page.getByRole('button',{name:'Copia password',exact:true}).click();expect(await page.evaluate(()=>testCalls.at(-1).action)).toBe('archiveCopySecret');await expect(page.locator('#modal')).not.toContainText('secret-value');
+ for(const width of [1480,640]){await page.setViewportSize({width,height:920});const audit=await new AxeBuilder({page}).include('#modal').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(audit.violations).toEqual([]);const box=await page.locator('#modal').boundingBox();expect(box.x+box.width).toBeLessThanOrEqual(width)}
+ await page.getByRole('button',{name:'Tutti gli archivi',exact:true}).click();await page.getByRole('button',{name:'Accessi e proprietà',exact:true}).click();await expect(page.getByRole('heading',{name:'Trasferisci la proprietà',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Revoca accesso',exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Tutti gli archivi',exact:true}).click();await page.evaluate(()=>{fixtureArchives=[{id:'11111111-2222-4333-8444-555555555555',name:'Archivio lettura',ownerName:'owner@example.invalid',access:'read'}]});await page.getByRole('button',{name:'Aggiorna elenco',exact:true}).click();await page.getByRole('button',{name:'Apri archivio',exact:true}).click();await expect(page.getByRole('button',{name:'Salva nome e note',exact:true})).toHaveCount(0);await expect(page.getByLabel('Nome',{exact:true})).toHaveAttribute('readonly','');await page.keyboard.press('Escape');await expect(page.locator('#modal')).not.toBeVisible();
+});
+
+test('remembered accounts show disconnected identities and keep remove separate from switching',async({page})=>{
+ const {default:AxeBuilder}=require('@axe-core/playwright');await page.evaluate(()=>{fixtureAccounts=[{id:'00000000-0000-0000-0000-000000000000',email:'one@example.invalid',name:'One',current:true,connected:true},{id:'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',email:'two@example.invalid',name:'Two',current:false,connected:false}];accountChooserDialog()});
+ await expect(page.getByRole('heading',{name:'Seleziona un account',exact:true})).toBeVisible();await expect(page.locator('#modal')).toContainText('Disconnesso');await expect(page.getByRole('button',{name:/one@example.invalid/})).toBeDisabled();await page.getByLabel('Email per un altro account',{exact:true}).fill('three@example.invalid');await page.getByRole('button',{name:'Continua con un altro account',exact:true}).click();expect(await page.evaluate(()=>testCalls.findLast(c=>c.action==='workspaceAdd').payload)).toEqual({email:'three@example.invalid'});
+ for(const width of [1480,640]){await page.setViewportSize({width,height:920});expect((await new AxeBuilder({page}).include('#modal').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations).toEqual([])}
+});
+
+
+test('background lifecycle preferences are labelled and saved independently',async({page})=>{
+ await page.goto('https://relay.local/');await page.locator('#settings-btn').click();
+ const tray=page.getByRole('checkbox',{name:'Alla chiusura mantieni Relay nell’area di notifica'});await expect(tray).not.toBeChecked();await tray.check();
+ await expect(page.getByRole('checkbox',{name:'Controlla aggiornamenti all’avvio',exact:true})).toBeChecked();
+ await page.getByRole('checkbox',{name:'Controlla aggiornamenti ogni giorno mentre Relay è aperto'}).uncheck();
+ await page.getByRole('button',{name:'Salva chiusura e aggiornamenti'}).click();
+ expect(await page.evaluate(()=>window.testCalls.find(c=>c.action==='lifecycleSettings').payload)).toEqual({closeToTray:true,checkUpdatesOnStartup:true,checkUpdatesDaily:false});
+});
+test('critical update screen explains the lock and allows update or exit',async({page})=>{
+ await page.goto('https://relay.local/');await expect(page.locator('#settings-btn')).toBeVisible();
+ await page.evaluate(()=>{const release={version:'v0.2.19',notes:'Security fixture <script>unsafe</script>',policy:{categories:['interface','features','security'],security:'critical',minimumSupportedVersion:'0.2.19'}};window.fixtureUpdateRelease=release;window.fixtureEmit('updateAvailable',{release,required:true});});
+ await expect(page.locator('#modal-title')).toHaveText('Aggiornamenti');await expect(page.locator('#modal-body')).toContainText('La console resta bloccata');
+ await expect(page.locator('#modal-body')).toContainText('Grafica e accessibilità · Nuove funzionalità · Sicurezza — Sicurezza critica');
+ await page.keyboard.press('Escape');await expect(page.locator('#modal')).toBeVisible();await page.locator('#modal-close').click();await expect(page.locator('#modal')).toBeVisible();
+ await expect(page.locator('#modal-body script')).toHaveCount(0);await page.getByRole('button',{name:'Esci da Relay',exact:true}).click();
+ expect(await page.evaluate(()=>window.testCalls.some(c=>c.action==='applicationExit'))).toBe(true);
+});
+
+
+test('isolated personal archive recovery requires explicit local review before requesting fresh authentication',async({page})=>{
+ await page.goto('https://relay.local/');await expect(page.locator('#settings-btn')).toBeVisible();
+ await page.evaluate(()=>{window.fixtureState.account={linked:true,online:true,ready:true,personalRecovery:true,name:'Synthetic recovery account',message:'Archivio isolato'};window.fixtureState.vault.unlocked=true;update(window.fixtureState);});
+ await page.locator('#settings-btn').click();await page.getByRole('tab',{name:'Account e sincronizzazione',exact:true}).click();
+ await page.getByRole('button',{name:'Ripristina sincronizzazione dalla copia locale verificata',exact:true}).click();
+ await expect(page.locator('#modal-title')).toHaveText('Ripristina sincronizzazione personale');
+ await page.getByLabel('Password archivio online',{exact:true}).fill('Verified recovery fixture 036!');await page.getByLabel('Ripeti password (per la prima creazione)',{exact:true}).fill('Verified recovery fixture 036!');
+ await page.getByRole('button',{name:'Collega e sincronizza',exact:true}).click();await expect(page.locator('#modal-body')).toContainText('Verifica prima la copia locale');
+ expect(await page.evaluate(()=>window.testCalls.some(c=>c.action==='accountSetup'))).toBe(false);
+ await page.getByRole('checkbox',{name:'Ho verificato che la copia locale è attendibile'}).check();await page.getByRole('button',{name:'Collega e sincronizza',exact:true}).click();
+ const payload=await page.evaluate(()=>window.testCalls.find(c=>c.action==='accountSetup').payload);expect(payload.recoverPersonal).toBe(true);expect(payload.reviewedLocal).toBe(true);
 });

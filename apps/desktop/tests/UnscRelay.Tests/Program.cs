@@ -1,3 +1,9 @@
+if(args.Length==1&&args[0]=="--personal-archive-recovery")return await PersonalArchiveRecoveryChecks.Run();
+if(args.Length==1&&args[0]=="--update-policy")return UpdatePolicyChecks.Run();
+if(args.Length==1&&args[0]=="--archive-client")return await ArchiveClientChecks.Run();
+if(args.Length==1&&args[0]=="--archive-key-interop")return await ArchiveInteropChecks.Run();
+if(args.Length==1&&args[0]=="--account-workspaces")return AccountWorkspaceChecks.Run();
+if(args.Length==1&&args[0]=="--archive-sharing")return ArchiveSharingChecks.Run();
 if(args.Length==1&&args[0]=="--security-review")return SecurityReviewChecks.Run();
 if(args.Length==1&&args[0]=="--native-recovery")return await NativeRecoveryChecks.Run();
 if(args.Length==1&&args[0]=="--account-transport")return await AccountTransportChecks.Run();

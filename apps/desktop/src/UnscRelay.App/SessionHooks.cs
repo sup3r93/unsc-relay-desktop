@@ -15,8 +15,10 @@ public partial class MainWindow
     }
     async Task RunHooks(ConnectionProfile profile,string phase,SshSession? session=null,bool required=false)
     {
+        if(CriticalUpdateRequired)return;
         foreach(var hook in profile.Hooks.Where(h=>h.Enabled&&h.Phase==phase))
         {
+            if(CriticalUpdateRequired)return;
             Emit("notice",new{text="Hook "+phase+" / "+profile.Name+" in esecuzione..."});
             try{if(hook.Kind=="local")await ConnectionHooks.RunLocal(hook);else if(session!=null)await session.RunRemoteHook(hook);}
             catch(Exception ex){if(required)throw;Emit("notice",new{text="Hook "+phase+" / "+profile.Name+": "+ex.Message});}
@@ -34,6 +36,6 @@ public partial class MainWindow
     }
     void SessionEnded(string id)
     {
-        Dispatcher.BeginInvoke(async()=>{if(closing||updating||!hookedSessions.TryRemove(id,out var profile))return;if(!(brokenSessions.Contains(id)&&automaticRecoveryProfiles.Contains(profile.Id)))await RunHooks(profile,"after-disconnect");});
+        Dispatcher.BeginInvoke(async()=>{if(CriticalUpdateRequired||closing||updating||!hookedSessions.TryRemove(id,out var profile))return;if(!(brokenSessions.Contains(id)&&automaticRecoveryProfiles.Contains(profile.Id)))await RunHooks(profile,"after-disconnect");});
     }
 }

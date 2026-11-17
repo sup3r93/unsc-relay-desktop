@@ -114,7 +114,7 @@ public sealed record Workspace(string Name, string Layout, List<string> ProfileI
         if(ActivePaneIndex!=null&&(ActivePaneIndex<0||ActivePaneIndex>=ProfileIds.Count))throw new ArgumentException("Scheda attiva del workspace non valida.");
     }
 }
-public sealed record UserSettings(bool StartupVideo = true, bool ShutdownVideo = true, double StartupVolume = .8, double ShutdownVolume = 1, int AutoLockMinutes = 10, int RecordingRetentionDays = 0, bool RequireAppAuthentication = false, bool AssistantApiEnabled = false, bool AppMusicEnabled = true, double AppMusicVolume = .35, string ExternalEditor = "", string EditorPreference = "");
+public sealed record UserSettings(bool StartupVideo = true, bool ShutdownVideo = true, double StartupVolume = .8, double ShutdownVolume = 1, int AutoLockMinutes = 10, int RecordingRetentionDays = 0, bool RequireAppAuthentication = false, bool AssistantApiEnabled = false, bool AppMusicEnabled = true, double AppMusicVolume = .35, string ExternalEditor = "", string EditorPreference = "", bool CloseToTray = false, bool CheckUpdatesOnStartup = true, bool CheckUpdatesDaily = true);
 public sealed class AppData
 {
     public Dictionary<string, FileLocation> FileLocations { get; set; } = [];
