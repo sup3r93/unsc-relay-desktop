@@ -10,7 +10,7 @@ public partial class MainWindow
         NativeRecovery.Validate(profile,snapshot,vault.IsUnlocked);
         if(File.Exists(Path.Combine(dataPath,"NativeHome",".ssh","config")))throw new IOException("Config OpenSSH presente: riapri manualmente la sessione per confermarne i comandi.");
         if(automatic&&!automaticRecoveryProfiles.Contains(profile.Id))throw new OperationCanceledException("Riconnessione automatica disattivata.");
-        if(closing||updating||updateClosing)throw new OperationCanceledException("Chiusura in corso.");
+        if(CriticalUpdateRequired||closing||updating||updateClosing)throw new OperationCanceledException("Chiusura in corso.");
     }
     async Task<object> RecoverNativeProfile(ConnectionProfile profile,JsonElement payload)
     {

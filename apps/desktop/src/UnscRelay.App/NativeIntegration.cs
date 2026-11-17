@@ -104,7 +104,7 @@ public partial class MainWindow
             nativeAuthenticated.Add(id);
             if(nativeSessionProfiles.TryGetValue(id,out var authenticatedProfile))nativeRecoveryProfiles.TryAdd(id,NativeRecovery.Snapshot(authenticatedProfile));
             Emit("nativeAuthenticated",new{sessionId=id,connected=true,text="OpenSSH autenticato"});
-            await hooks.Authenticated();
+            if(!CriticalUpdateRequired)await hooks.Authenticated();
         }
         catch(Exception ex)when(ex is IOException or TimeoutException or ObjectDisposedException){Emit("notice",new{text=ex.Message});}
     }
@@ -124,7 +124,7 @@ public partial class MainWindow
         var files=new List<StorageFiles>();
         foreach(var child in children){if(storageSessions.Remove(child,out var file))files.Add(file);if(!preserveChildren)nativeStorageParents.Remove(child);Emit("storageStatus",new{sessionId=child,connected=false,text="Connessione OpenSSH terminata. Browser SFTP in attesa di riconnessione."});}
         foreach(var file in files)await file.DisposeAsync();
-        if(hooks!=null)await hooks.Finished(runHooks&&!updating&&!updateClosing);
+        if(hooks!=null)await hooks.Finished(!CriticalUpdateRequired&&runHooks&&!updating&&!updateClosing);
         if(control!=null)await control.DisposeAsync();if(bridge!=null)await bridge.DisposeAsync();
         if(folder!=null){foreach(var name in new[]{"config","identity.pub","identity-cert.pub","(stdin)-cert.pub"}){var file=Path.Combine(folder,name);if(File.Exists(file))File.Delete(file);}try{Directory.Delete(folder);}catch(IOException){}}
     }

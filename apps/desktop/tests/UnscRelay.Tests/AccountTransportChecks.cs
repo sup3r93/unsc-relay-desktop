@@ -24,7 +24,9 @@ static class AccountTransportChecks
         void Check(bool ok,string name){if(!ok)throw new Exception(name);count++;Console.WriteLine("PASS "+name);}
         try
         {
-            var store=new AccountSyncStore(directory);store.Save(new(){Owner=owner,Subject="fixture-subject",Name="Fixture",AccessToken="fixture-access",TokenExpires=DateTimeOffset.UtcNow.AddHours(1),Activated=true});
+            var store=new AccountSyncStore(directory);store.Save(new(){Owner=owner,Subject="fixture-subject",Name="Fixture",Email="fixture@example.invalid",AccessToken="fixture-access",TokenExpires=DateTimeOffset.UtcNow.AddHours(1),Activated=true});
+            Check(CloudAccountClient.RememberedEmail(new AccountSyncState{Name="legacy@example.invalid"})=="legacy@example.invalid","Legacy email-only account names provide a login hint without migration");
+            Check(CloudAccountClient.RememberedEmail(new AccountSyncState{Name="Display name",Email="bad\r\nvalue"})=="","Invalid or multiline remembered metadata cannot become a login hint");
             var server=new Server(owner,half);using var client=new CloudAccountClient(directory,server);
             await client.VerifyOnline(CancellationToken.None);Check(server.Paths.Last()=="/api/account","Online access validates the authenticated personal identity");
             var remote=await client.DeviceUnlock(device,true,CancellationToken.None);Check(remote.SequenceEqual(half),"Online device enrollment obtains a separate server key half");
@@ -50,6 +52,7 @@ static class AccountTransportChecks
             Check(vault.ReadPassword(id)=="test secret"&&server.Requests==requests,"Valid enrolled Hello proof opens archive offline with no network request");vault.Lock();
             proof[0]^=1;try{vault.UnlockWindowsHello(challenge,proof);throw new Exception("Bad proof accepted");}catch(CryptographicException){Check(!vault.IsUnlocked,"Invalid offline Hello proof leaves archive locked");}
             await client.LogoutAsync(CancellationToken.None);Check(!new AccountSyncStore(directory).Load().Activated,"Logout persists deactivation even without network");
+            Check(new AccountSyncStore(directory).Load().Email=="fixture@example.invalid","Explicit logout retains only remembered email metadata alongside the locked local archive");
             Check(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(directory,"account-sync.dpapi"))).Contains("fixture-access"),"Account transport tokens remain protected at rest");
             Console.WriteLine("Account transport checks: "+count);return 0;
         }

@@ -17,7 +17,7 @@
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>UNSC Relay</AssemblyName>
-    <Version>0.2.18</Version>
+    <Version>0.2.19</Version>
     <ApplicationIcon>Assets\Relay.ico</ApplicationIcon>
   </PropertyGroup>
 
