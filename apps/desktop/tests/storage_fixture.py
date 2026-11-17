@@ -15,7 +15,7 @@ def port():
         s.bind(("127.0.0.1", 0)); return s.getsockname()[1]
 
 def run(exe):
-    temp=pathlib.Path(tempfile.mkdtemp(prefix="relay-storage-fixture-")); server=None; process=None; tls_server=None
+    fixture=tempfile.TemporaryDirectory(prefix="relay-storage-fixture-"); temp=pathlib.Path(fixture.name); server=None; process=None; tls_server=None
     try:
         ftp=temp/"ftp"; s3=temp/"s3"; bucket=s3/"fixture"
         for directory in (ftp,bucket):
@@ -70,6 +70,15 @@ def run(exe):
             process.terminate()
             try:process.wait(5)
             except subprocess.TimeoutExpired:process.kill();process.wait()
-        # Only the exact, newly-created fixture directory is removed.
-        if temp.parent==pathlib.Path(tempfile.gettempdir()) and temp.name.startswith("relay-storage-fixture-"):shutil.rmtree(temp)
-if __name__=="__main__":run(str(pathlib.Path(sys.argv[1]).resolve(strict=True)))
+        # The standard-library owner cleans only its freshly-created temporary directory.
+        fixture.cleanup()
+
+def bundled_engine(argument):
+    root=pathlib.Path(__file__).resolve().parents[1]
+    allowed=[root/"src/UnscRelay.App/Tools/Rclone/rclone.exe",root/"artifacts/distribution/Librerie/Tools/Rclone/rclone.exe"]
+    for candidate in allowed:
+        if pathlib.Path(argument).resolve()==candidate.resolve():
+            return str(candidate.resolve(strict=True))
+    raise ValueError("Choose only the bundled source or packaged Rclone executable")
+
+if __name__=="__main__":run(bundled_engine(sys.argv[1]))

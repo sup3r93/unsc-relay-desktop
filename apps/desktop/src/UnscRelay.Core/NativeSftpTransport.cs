@@ -12,9 +12,10 @@ public static class NativeSftpTransport
         Environment.GetEnvironmentVariable("RELAY_SFTP_TRANSPORT") is { Length: > 0 };
     public static async Task<int> Run(string[] args)
     {
-        var executable = Environment.GetEnvironmentVariable("RELAY_SFTP_TRANSPORT");
-        if(!IsInvocation(args) || executable == null || !Path.IsPathFullyQualified(executable) || !File.Exists(executable) ||
-            !Path.GetFileName(executable).Equals("ssh.exe",StringComparison.OrdinalIgnoreCase)) return 1;
+        var executable = Path.Combine(AppContext.BaseDirectory,"Tools","Cygwin","bin","ssh.exe");
+        var requested = Environment.GetEnvironmentVariable("RELAY_SFTP_TRANSPORT");
+        if(!IsInvocation(args) || requested == null || !Path.IsPathFullyQualified(requested) || !File.Exists(executable) ||
+            !Path.GetFullPath(requested).Equals(executable,StringComparison.OrdinalIgnoreCase)) return 1;
         var info = new ProcessStartInfo(executable) { UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true };
         info.Environment.Remove("RELAY_SFTP_TRANSPORT");
         info.ArgumentList.Add("-o");info.ArgumentList.Add("PermitLocalCommand=yes");
