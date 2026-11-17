@@ -188,13 +188,14 @@ public partial class MainWindow
         public FileSystemWatcher? Watcher { get; set; }
         public bool Busy { get; set; }
         public bool AutoUpload { get; set; }
+        public bool ExternalOnly { get; set; }
         public string? NativeSnapshot { get; init; }
         public bool Dirty { get; set; }
         public bool AutoScheduled { get; set; }
         public int ExternalRevision { get; set; }
     }
     readonly Dictionary<string, EditBuffer> editBuffers = [];
-    bool EditorsBusy => editBuffers.Values.Any(e => e.Busy);
+    bool EditorsBusy => editBuffers.Values.Any(e => e.Busy || e.AutoScheduled);
     async Task<object> OpenRemoteEditor(JsonElement payload)
     {
         var session = Session(payload); var remote = await session.ReadTextAsync(S(payload, "path"));
@@ -207,7 +208,7 @@ public partial class MainWindow
     {
         if(sessions.TryGetValue(edit.SessionId,out var editorSession)&&recoveryTasks.ContainsKey(editorSession.Profile.Id))throw new IOException("Ripristino SFTP in corso. Le modifiche dell’editor sono conservate.");
         if (edit.Busy) throw new IOException("Salvataggio già in corso."); edit.Busy = true;
-        var scratch = "";
+        var scratch = ""; var revision = edit.ExternalRevision;
         try
         {
             var bytes = external ? await File.ReadAllBytesAsync(edit.Local) : new UTF8Encoding(edit.Original.Bom, true).GetPreamble().Concat(new UTF8Encoding(false, true).GetBytes(text)).ToArray();
@@ -220,6 +221,7 @@ public partial class MainWindow
             try { await session.TransferAdvancedAsync(transfer, (_, _) => { }, CancellationToken.None); }
             catch { try { await session.DiscardPartialAsync(transfer); } catch { } throw; }
             edit.Original = new(edit.Original.Path, content, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), bom);
+            if (external && revision == edit.ExternalRevision) edit.Dirty = false;
             Emit("editorSaved", new { edit.Id, edit.Original.Text, edit.Original.Hash, external });
         }
         finally { if (File.Exists(scratch)) File.Delete(scratch); edit.Busy = false; }
@@ -228,8 +230,14 @@ public partial class MainWindow
     {
         var exe = choose ? OpenFile("Seleziona l’EXE dell’editor (es. Notepad++ o Code)") : data.Settings.ExternalEditor.Length>0?data.Settings.ExternalEditor:Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "notepad.exe");
         if (exe == null) return; if (!File.Exists(exe))throw new IOException("Editor non trovato. Sceglilo di nuovo in Impostazioni → Editor.");if (!exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Seleziona un programma EXE.");
-        PrepareExternalEditor(edit);
-        Process.Start(ExternalEditorFile.Launch(exe, edit.Local));
+        BeginExternalEdit(edit, () => { using var process = Process.Start(ExternalEditorFile.Launch(exe, edit.Local)) ?? throw new IOException("Impossibile avviare l’editor esterno."); });
+    }
+    void BeginExternalEdit(EditBuffer edit, Action launch)
+    {
+        if (!edit.ExternalOnly && edit.Dirty) throw new IOException("Salva prima le modifiche nell’editor integrato.");
+        PrepareExternalEditor(edit); launch();
+        edit.ExternalOnly = true; edit.AutoUpload = true;
+        if (edit.Dirty) ScheduleExternalSave(edit);
     }
     void PrepareExternalEditor(EditBuffer edit)
     {
@@ -238,33 +246,45 @@ public partial class MainWindow
             var dir = Path.Combine(dataPath, "Editor", edit.Id); Directory.CreateDirectory(dir);
             var name = ExternalEditorFile.CopyName(edit.Original.Path);
             edit.Local = Path.Combine(dir, name); File.WriteAllText(edit.Local, edit.Original.Text, new UTF8Encoding(edit.Original.Bom));
-            edit.Watcher = new FileSystemWatcher(dir) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName, EnableRaisingEvents = true };
-            void Changed() => Dispatcher.BeginInvoke(async () =>
-            {
-                edit.ExternalRevision++; Emit("editorExternalChanged", new { edit.Id });
-                if (!edit.AutoUpload || edit.AutoScheduled) return;
-                edit.AutoScheduled = true;
-                try
-                {
-                    while (edit.AutoUpload && editBuffers.ContainsKey(edit.Id))
-                    {
-                        var revision = edit.ExternalRevision; await Task.Delay(700);
-                        if (!edit.AutoUpload || !editBuffers.ContainsKey(edit.Id)) return;
-                        if (revision != edit.ExternalRevision || edit.Busy) continue;
-                        try { await SaveRemoteEditor(edit, "", true); }
-                        catch (Exception ex) { edit.AutoUpload = false; Emit("editorConflict", new { edit.Id, error = ex.Message }); return; }
-                        if (revision == edit.ExternalRevision) return;
-                    }
-                }
-                finally { edit.AutoScheduled = false; }
-            });
+            edit.Watcher = new FileSystemWatcher(dir) { Filter = Path.GetFileName(edit.Local), NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName, EnableRaisingEvents = true };
+            void Changed() => Dispatcher.BeginInvoke(() => { if(!editBuffers.ContainsKey(edit.Id))return; edit.ExternalRevision++; edit.Dirty = true; Emit("editorExternalChanged", new { edit.Id }); ScheduleExternalSave(edit); });
             edit.Watcher.Changed += (_, _) => Changed(); edit.Watcher.Created += (_, _) => Changed(); edit.Watcher.Renamed += (_, _) => Changed();
         }
+    }
+    void ScheduleExternalSave(EditBuffer edit)
+    {
+        if (!edit.AutoUpload || edit.AutoScheduled || !editBuffers.ContainsKey(edit.Id)) return;
+        edit.AutoScheduled = true;
+        _ = Run();
+        async Task Run()
+        {
+            try
+            {
+                while (edit.AutoUpload && editBuffers.ContainsKey(edit.Id))
+                {
+                    var revision = edit.ExternalRevision; await Task.Delay(700);
+                    if (!edit.AutoUpload || !editBuffers.ContainsKey(edit.Id)) return;
+                    if (revision != edit.ExternalRevision || edit.Busy) continue;
+                    try { await SaveRemoteEditor(edit, "", true); }
+                    catch (Exception ex) { edit.AutoUpload = false; Emit("editorConflict", new { edit.Id, error = ex.Message }); return; }
+                    if (revision == edit.ExternalRevision) return;
+                }
+            }
+            finally { edit.AutoScheduled = false; }
+        }
+    }
+    void PrepareCloseSessionEditors(string sessionId)
+    {
+        var edits = editBuffers.Values.Where(e => e.SessionId == sessionId).ToArray();
+        if (edits.Any(e => !e.ExternalOnly)) throw new IOException("Chiudi prima gli editor integrati associati alla sessione SFTP.");
+        if (edits.Any(e => e.Busy || e.AutoScheduled)) throw new IOException("Attendi il caricamento dei salvataggi dell’editor esterno.");
+        if (edits.Any(e => e.Dirty) && !Confirm("Alcuni salvataggi esterni non sono stati caricati. Chiudere SFTP conservando le copie locali?")) throw new OperationCanceledException();
+        foreach (var edit in edits) CloseEditor(edit.Id);
     }
     void CloseEditor(string id)
     {
         if (!editBuffers.TryGetValue(id, out var edit)) return; if (edit.Busy) throw new IOException("Attendi il salvataggio dell’editor.");
-        editBuffers.Remove(id); edit.Watcher?.Dispose();
+        edit.AutoUpload = false; editBuffers.Remove(id); edit.Watcher?.Dispose();
         // Keep external scratch copies: a still-open editor must not lose its unsaved buffer.
     }
     static Task<RemoteText> ReadLocalComparison(string local) => Task.Run(() =>
@@ -316,10 +336,10 @@ public partial class MainWindow
             case "filePause": var pause = fileJobs[S(p, "id")]; pause.RecoveryPaused=false; if (pause.Cancellation != null) { pause.Status = "Pausa richiesta"; pause.Cancellation.Cancel(); } else if(pause.Status=="Attesa connessione")pause.Status="In pausa"; EmitQueue(); return QueueSnapshot();
             case "fileResume": var retry = fileJobs[S(p, "id")]; if(recoveryTasks.Count>0)throw new IOException("Attendi il ripristino delle connessioni."); if (retry.Cancellation != null) throw new IOException("Attendi l’arresto del trasferimento."); if (retry.Status == "Completato") return QueueSnapshot(); retry.RecoveryPaused=false;retry.Running = RunJob(retry, true); return QueueSnapshot();
             case "editorOpen": return await OpenRemoteEditor(p);
-            case "editorSave": await SaveRemoteEditor(editBuffers[S(p, "id")], S(p, "text"), false); return null;
+            case "editorSave": if(editBuffers[S(p,"id")].ExternalOnly)throw new IOException("Questo file usa l’editor esterno."); await SaveRemoteEditor(editBuffers[S(p, "id")], S(p, "text"), false); return null;
             case "editorExternal": ExternalEditor(editBuffers[S(p, "id")], p.TryGetProperty("choose", out var choose) && choose.GetBoolean()); return null;
             case "editorPublish": await SaveRemoteEditor(editBuffers[S(p, "id")], "", true); return null;
-            case "editorAuto": var edit = editBuffers[S(p, "id")]; edit.AutoUpload = p.GetProperty("enabled").GetBoolean(); return null;
+            case "editorAuto": var edit = editBuffers[S(p, "id")]; edit.AutoUpload = p.GetProperty("enabled").GetBoolean(); if(edit.AutoUpload && edit.Dirty)ScheduleExternalSave(edit); return null;
             case "editorDirty": editBuffers[S(p, "id")].Dirty = p.GetProperty("dirty").GetBoolean(); return null;
             case "editorReload": var reload = editBuffers[S(p, "id")]; if (reload.Busy) throw new IOException("Attendi il salvataggio."); reload.Original = await Session(JsonSerializer.SerializeToElement(new { sessionId = reload.SessionId })).ReadTextAsync(reload.Original.Path); return new { reload.Id, reload.Original.Text, reload.Original.Hash };
             case "editorClose": CloseEditor(S(p, "id")); return null;

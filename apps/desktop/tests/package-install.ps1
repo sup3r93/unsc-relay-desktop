@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Thumbprint,[string]$Version='0.2.17')
+param([Parameter(Mandatory)][string]$Thumbprint,[string]$Version='0.2.18')
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path $PSScriptRoot -Parent
 $taskFixture=Join-Path ([IO.Path]::GetTempPath()) ('ur-pkg-'+[Guid]::NewGuid().ToString('N').Substring(0,8))

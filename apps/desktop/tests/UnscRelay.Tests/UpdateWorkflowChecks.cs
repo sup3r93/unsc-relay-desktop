@@ -21,6 +21,8 @@ internal static class UpdateWorkflowChecks
         File.WriteAllText(Path.Combine(directory, "keys.vault"), "Encrypted fixture, not a real private key"); File.WriteAllText(Path.Combine(directory, "hostkeys.json"), "[]");
         Directory.CreateDirectory(Path.Combine(directory, "WebView")); File.WriteAllText(Path.Combine(directory, "WebView", "cache"), "cache fixture");
         File.WriteAllText(Path.Combine(directory, "transfers.json"), "[]");
+        File.WriteAllText(Path.Combine(directory,"account-sync.dpapi"),"synthetic protected account state");
+        File.WriteAllText(Path.Combine(directory,"account-unlock.dpapi"),"synthetic protected device state");
         var backup = UpdateBackup.Create(directory, "0.1.3");
         Check(UpdateBackup.DataFiles.All(name => File.ReadAllBytes(Path.Combine(directory, name)).SequenceEqual(File.ReadAllBytes(Path.Combine(backup, name)))), "Pre-update backup preserves all data and encrypted credential byte for byte");
         Check(!Directory.Exists(Path.Combine(backup, "WebView")) && File.Exists(Path.Combine(backup, "manifest.json")), "Update backup uses explicit data allowlist and manifest");

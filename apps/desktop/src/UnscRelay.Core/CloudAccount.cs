@@ -152,7 +152,25 @@ public sealed class CloudAccountClient : IDisposable
         }
         throw new OnlineAccessException("Accesso online non disponibile.");
     }
-    public async Task<byte[]> DeviceUnlock(Guid device,bool create,CancellationToken ct){using var response=await Send(create?HttpMethod.Post:HttpMethod.Get,"api/desktop/unlock/"+device.ToString("D"),create?new{}:null,ct);if(response.StatusCode==HttpStatusCode.NotFound)throw new OnlineAccessException("Collegamento di sicurezza del dispositivo non disponibile. L’archivio locale è conservato.");response.EnsureSuccessStatusCode();using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));var bytes=Convert.FromBase64String(json.RootElement.GetProperty("secret").GetString()!);if(bytes.Length!=32){CryptographicOperations.ZeroMemory(bytes);throw new CryptographicException("Risposta di sblocco non valida.");}return bytes;}
+    public async Task<byte[]> DeviceUnlock(Guid device,bool create,CancellationToken ct)
+    {
+        if(device==Guid.Empty)throw new ArgumentException("Dispositivo non valido.",nameof(device));
+        using var response=await Send(create?HttpMethod.Post:HttpMethod.Get,"api/desktop/unlock/"+device.ToString("D"),create?new{}:null,ct);
+        if(response.StatusCode==HttpStatusCode.NotFound)throw new OnlineAccessException(create
+            ? "Servizio di sblocco online non disponibile o non aggiornato. Contatta l’amministratore; l’archivio locale è conservato."
+            : "Collegamento di sicurezza del dispositivo non trovato sul server. L’archivio locale è conservato e non è stato ricollegato automaticamente.");
+        if((int)response.StatusCode>=500)throw new OnlineAccessException("Servizio di sblocco temporaneamente non disponibile. Riprova più tardi; l’archivio locale è conservato.");
+        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
+            var bytes=Convert.FromBase64String(json.RootElement.GetProperty("secret").GetString()!);
+            if(bytes.Length!=32){CryptographicOperations.ZeroMemory(bytes);throw new CryptographicException("Risposta di sblocco non valida.");}
+            return bytes;
+        }
+        catch(Exception ex)when(ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentNullException)
+        { throw new CryptographicException("Risposta di sblocco non valida. L’archivio locale è conservato.",ex); }
+    }
     public async Task<RemoteVault?> Read(CancellationToken ct)
     {
         using var response=await Send(HttpMethod.Get,"api/vault",null,ct);
