@@ -6,14 +6,14 @@ static class AccountTransportChecks
 {
     sealed class Server(string owner,byte[] half):HttpMessageHandler
     {
-        public bool Offline;public HttpStatusCode Status=HttpStatusCode.OK;public int Requests;public bool WrongSize;public List<string> Paths=[];
+        public bool Offline;public HttpStatusCode Status=HttpStatusCode.OK;public int Requests;public bool WrongSize;public bool Malformed;public List<string> Paths=[];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)
         {
             Requests++;Paths.Add(request.RequestUri!.AbsolutePath);
             if(Offline)throw new HttpRequestException("Fixture offline");
             if(request.RequestUri.Host!="unsc.responda.eu"||request.RequestUri.Scheme!="https"||request.Headers.Authorization?.Parameter!="fixture-access")throw new Exception("Invalid authenticated request");
             if(Status!=HttpStatusCode.OK)return Task.FromResult(new HttpResponseMessage(Status));
-            object value=request.RequestUri.AbsolutePath=="/api/account"?new OnlineIdentity(owner,"fixture-subject","Fixture user"):new{secret=Convert.ToBase64String(WrongSize?new byte[3]:half)};
+            object value=request.RequestUri.AbsolutePath=="/api/account"?new OnlineIdentity(owner,"fixture-subject","Fixture user"):new{secret=Malformed?"invalid-base64":Convert.ToBase64String(WrongSize?new byte[3]:half)};
             return Task.FromResult(new HttpResponseMessage(Status){Content=JsonContent.Create(value,options:VaultSyncCrypto.Json)});
         }
     }
@@ -37,6 +37,10 @@ static class AccountTransportChecks
             Check(!unlocks.HelloAllowed(owner,"any-key"),"No offline method is silently enabled after online migration");
             server.Offline=false;server.Status=HttpStatusCode.Forbidden;try{await client.DeviceUnlock(device,false,CancellationToken.None);throw new Exception("Revoked online accepted");}catch(OnlineAccessException){Check(!vault.IsUnlocked,"Server denial cannot unlock the archive");}
             server.Status=HttpStatusCode.NotFound;try{await client.DeviceUnlock(device,false,CancellationToken.None);throw new Exception("Missing half accepted");}catch(OnlineAccessException){Check(bytes.SequenceEqual(File.ReadAllBytes(vaultPath)),"Missing remote half never overwrites local encrypted data");}
+            var beforeInvalidDevice=server.Requests;try{await client.DeviceUnlock(Guid.Empty,true,CancellationToken.None);throw new Exception("Empty device accepted");}catch(ArgumentException){Check(server.Requests==beforeInvalidDevice,"Empty device refused before any network or enrollment request");}
+            try{await client.DeviceUnlock(device,true,CancellationToken.None);throw new Exception("Missing API accepted");}catch(OnlineAccessException ex){Check(ex.Message.Contains("non aggiornato")&&bytes.SequenceEqual(File.ReadAllBytes(vaultPath)),"Missing enrollment API has an actionable service error and preserves the archive");}
+            foreach(var status in new[]{HttpStatusCode.BadGateway,HttpStatusCode.ServiceUnavailable,HttpStatusCode.GatewayTimeout}){server.Status=status;try{await client.DeviceUnlock(device,false,CancellationToken.None);throw new Exception("Unavailable service accepted");}catch(OnlineAccessException ex){Check(ex.Message.Contains("temporaneamente")&&!vault.IsUnlocked&&bytes.SequenceEqual(File.ReadAllBytes(vaultPath)),"Temporary service failure is safe and actionable: "+(int)status);}}
+            server.Status=HttpStatusCode.OK;server.Malformed=true;try{await client.DeviceUnlock(device,false,CancellationToken.None);throw new Exception("Malformed half accepted");}catch(CryptographicException){Check(!vault.IsUnlocked&&bytes.SequenceEqual(File.ReadAllBytes(vaultPath)),"Malformed online half produces a safe error without changing the archive");}server.Malformed=false;
             server.Status=HttpStatusCode.OK;server.WrongSize=true;try{await client.DeviceUnlock(device,false,CancellationToken.None);throw new Exception("Invalid half accepted");}catch(CryptographicException){Check(!vault.IsUnlocked,"Invalid remote key size fails closed");}server.WrongSize=false;
             remote=await client.DeviceUnlock(device,false,CancellationToken.None);vault.UnlockAccount(binding,remote,owner);CryptographicOperations.ZeroMemory(remote);
             using var rsa=RSA.Create(2048);var enrollment=vault.PrepareWindowsHello() with{PublicKey=Convert.ToBase64String(rsa.ExportSubjectPublicKeyInfo())};

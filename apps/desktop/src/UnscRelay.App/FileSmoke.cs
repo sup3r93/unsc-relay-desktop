@@ -46,13 +46,22 @@ public partial class MainWindow
             checks["lastDirectoriesPersistByEndpoint"] = store.Load().FileLocations[profile.Id].Remote == "/tree" && store.Load().FileLocations[profile.Id].Host == profile.Host;
             var opened = JsonSerializer.SerializeToElement(await OpenRemoteEditor(P(new { sessionId = sid, path = "/editor.txt" })), ProfileStore.Json); var editor = editBuffers[opened.GetProperty("id").GetString()!];
             await SaveRemoteEditor(editor, "after\r\n", false); checks["nativeEditorSavesText"] = File.ReadAllText(Path.Combine(root, "editor.txt")) == "after\r\n";
-            PrepareExternalEditor(editor); checks["externalEditorCopyUsesSafeLeaf"] = Path.GetFileName(editor.Local) == "relay-editor.txt"; editor.AutoUpload = true; File.WriteAllText(editor.Local, "external saved fixture\r\n");
+            BeginExternalEdit(editor, () => { }); checks["externalEditorCopyUsesSafeLeaf"] = Path.GetFileName(editor.Local) == "relay-editor.txt" && editor.AutoUpload && editor.ExternalOnly; File.WriteAllText(editor.Local, "external saved fixture\r\n");
             for (var i = 0; i < 80 && File.ReadAllText(Path.Combine(root, "editor.txt")) != "external saved fixture\r\n"; i++) await Task.Delay(50);
             checks["externalEditorWatcherPublishesSavedContent"] = File.ReadAllText(Path.Combine(root, "editor.txt")) == "external saved fixture\r\n"; editor.AutoUpload = false;
+            for(var i=0;i<80&&editor.AutoScheduled;i++)await Task.Delay(50);
+            BeginExternalEdit(editor,()=>{}); checks["externalReopenKeepsExistingCopy"] = File.ReadAllText(editor.Local)=="external saved fixture\r\n";
+            try{await FileAction("editorSave",P(new{id=editor.Id,text="must not overwrite"}));}catch(IOException){checks["externalModeRejectsIntegratedWrites"]=File.ReadAllText(Path.Combine(root,"editor.txt"))=="external saved fixture\r\n";}
+            var externalReplacement=editor.Local+".replace";File.WriteAllText(externalReplacement,"atomic editor save\r\n");File.Move(externalReplacement,editor.Local,true);
+            for(var i=0;i<80&&(editor.AutoScheduled||File.ReadAllText(Path.Combine(root,"editor.txt"))!="atomic editor save\r\n");i++)await Task.Delay(50);
+            checks["externalAtomicSavePublishesAutomatically"] = File.ReadAllText(Path.Combine(root,"editor.txt"))=="atomic editor save\r\n"&&!editor.Dirty;
             File.WriteAllText(Path.Combine(root, "editor.txt"), "outside change");
+            File.WriteAllText(editor.Local,"preserved local conflict");for(var i=0;i<80&&(editor.AutoUpload||editor.AutoScheduled);i++)await Task.Delay(50);
+            checks["externalConflictStopsAndKeepsLocalCopy"] = !editor.AutoUpload&&editor.Dirty&&File.ReadAllText(editor.Local)=="preserved local conflict"&&File.ReadAllText(Path.Combine(root,"editor.txt"))=="outside change";
             try { await SaveRemoteEditor(editor, "do not overwrite", false); } catch (IOException) { }
             checks["nativeEditorConflictPreservesRemote"] = File.ReadAllText(Path.Combine(root, "editor.txt")) == "outside change";
-            CloseEditor(editor.Id); checks["editorCanClose"] = editBuffers.Count == 0;
+            CloseEditor(editor.Id); checks["editorCanClose"] = editBuffers.Count == 0; checks["externalClosePreservesLocalCopy"] = File.ReadAllText(editor.Local)=="preserved local conflict";
+            var backgroundOpened=JsonSerializer.SerializeToElement(await OpenRemoteEditor(P(new{sessionId=sid,path="/editor.txt"})),ProfileStore.Json);var background=editBuffers[backgroundOpened.GetProperty("id").GetString()!];BeginExternalEdit(background,()=>{});PrepareCloseSessionEditors(sid);checks["externalSessionCanCloseWithoutHiddenEditorTab"]=editBuffers.Count==0&&File.Exists(background.Local);
             vault.Unlock("Desktop smoke fixture master!"); var key = KeyGeneration.Generate(vault, "No passphrase fixture", "ed25519");
             var keyProfile = profile with { Id = "no-phrase", Authentication = "key", KeyId = key.Id };
             using (var noPhrase = await CreateAuthenticatedSession(keyProfile, null, 0, Guid.NewGuid().ToString()))
@@ -94,7 +103,7 @@ public partial class MainWindow
         }
         catch (Exception ex) { error = ex.ToString(); }
         finally { foreach (var session in sessions.Values) session.Dispose(); sessions.Clear(); foreach (var id in editBuffers.Keys.ToArray()) CloseEditor(id); }
-        var success = error == null && checks.Count == 26 && checks.Values.All(v => v);
+        var success = error == null && checks.Count == 32 && checks.Values.All(v => v);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "files-smoke-result.json"), JsonSerializer.Serialize(new { success, checks, error }, ProfileStore.Json)); CompleteSmoke(success);
     }
 }

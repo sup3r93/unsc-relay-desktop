@@ -42,6 +42,19 @@ static class SecurityReviewChecks
             Reject(() => UpdateBackup.Create(linkedFile, "fixture"), "Backup refuses an allowlisted file redirected by a link");
             Check(!Directory.Exists(Path.Combine(target, "UpdateBackups")) && Directory.GetFileSystemEntries(target).Length == 1, "Rejected links create no backup outside the selected root");
             Check(File.ReadAllText(Path.Combine(target, "outside.txt")) == "outside synthetic fixture", "Rejected links preserve outside content");
+            var accountDirectory=Path.Combine(root.FullName,"account-backup");Directory.CreateDirectory(accountDirectory);
+            var accountOwner=new string('D',64);var serverHalf=RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                using var originalVault=new KeyVault(Path.Combine(accountDirectory,"keys.vault"));originalVault.Unlock("Synthetic backup migration password!");var record=originalVault.StorePassword("backup-fixture","recoverable fixture secret");
+                var unlockStore=new AccountUnlockStore(accountDirectory);originalVault.MigrateAccountUnlock(unlockStore,accountOwner,Guid.NewGuid(),serverHalf);
+                var accountBackup=UpdateBackup.Create(accountDirectory,"backup-fixture");
+                Check(File.ReadAllBytes(Path.Combine(accountDirectory,"account-unlock.dpapi")).SequenceEqual(File.ReadAllBytes(Path.Combine(accountBackup,"account-unlock.dpapi"))),"Update backup keeps the protected device capsule byte-for-byte with its vault");
+                using var restoredVault=new KeyVault(Path.Combine(accountBackup,"keys.vault"));using var restoredBinding=new AccountUnlockStore(accountBackup).Read(accountOwner)!;restoredVault.UnlockAccount(restoredBinding,serverHalf,accountOwner);
+                Check(restoredVault.ReadPassword(record)=="recoverable fixture secret","Migrated vault actually unlocks from the update backup with its matching capsule");
+                Check(!File.ReadAllText(Path.Combine(accountBackup,"keys.vault")).Contains("recoverable fixture secret")&&!File.ReadAllText(Path.Combine(accountBackup,"account-unlock.dpapi")).Contains(Convert.ToBase64String(serverHalf)),"Backup does not introduce plaintext secrets or the server unlock half");
+            }
+            finally{CryptographicOperations.ZeroMemory(serverHalf);}
             // NIST SP 800-38A, Appendix F.5.1 and F.2.1: test the actual vendored implementation.
             var aesKey = Convert.FromHexString("2b7e151628aed2a6abf7158809cf4f3c");
             var plain = Convert.FromHexString("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e51");
