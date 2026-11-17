@@ -77,7 +77,7 @@ def bundled_engine(argument):
     root=pathlib.Path(__file__).resolve().parents[1]
     allowed=[root/"src/UnscRelay.App/Tools/Rclone/rclone.exe",root/"artifacts/distribution/Librerie/Tools/Rclone/rclone.exe"]
     for candidate in allowed:
-        if pathlib.Path(argument).resolve()==candidate.resolve():
+        if os.path.normcase(os.path.normpath(argument))==os.path.normcase(str(candidate)):
             return str(candidate.resolve(strict=True))
     raise ValueError("Choose only the bundled source or packaged Rclone executable")
 

@@ -28,7 +28,10 @@
 
   <ItemGroup>
     <Content Include="Web\**\*" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="Tools\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Tools\**\*" Exclude="Tools\Cygwin\tmp\**\*;Tools\Cygwin\home\**\*;Tools\Cygwin\var\log\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Tools\Cygwin\tmp\.keep" Condition="Exists('Tools\Cygwin\tmp\.keep')" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Tools\Cygwin\home\.keep" Condition="Exists('Tools\Cygwin\home\.keep')" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Tools\Cygwin\var\log\.keep" Condition="Exists('Tools\Cygwin\var\log\.keep')" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
