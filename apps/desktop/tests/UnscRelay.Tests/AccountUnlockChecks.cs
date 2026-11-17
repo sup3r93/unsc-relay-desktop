@@ -33,7 +33,31 @@ static class AccountUnlockChecks
    vault.UnlockAccount(restored,remote,owner);Check(vault.ReadPassword(id)=="fixture-secret-value","online remains available after disabling Hello");
    vault.Lock();vault.Unlock("Legacy fixture password only!");Check(vault.List().Single().Id==key.Id,"legacy recovery retained without data destruction");
    Check(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(directory,"account-unlock.dpapi"))).Contains("fixture-secret-value"),"device capsule contains no plaintext vault secrets");
+   using var helloRsa=RSA.Create(2048);
+   var oldHello=vault.PrepareWindowsHello() with{PublicKey=Convert.ToBase64String(helloRsa.ExportSubjectPublicKeyInfo())};
+   var oldSignature=helloRsa.SignData(System.Text.Encoding.UTF8.GetBytes(oldHello.Message),HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+   vault.EnableWindowsHelloForUnlockedVault(oldHello,oldSignature);store.ConfirmHello(owner,oldHello.KeyName);
+   var legacyBytes=File.ReadAllBytes(path);var legacyCapsule=File.ReadAllBytes(Path.Combine(directory,"account-unlock.dpapi"));
+   Reject(()=>vault.MigrateAccountUnlock(store,owner,Guid.Empty,remote),"invalid migration rejected before writes");
+   Check(legacyBytes.SequenceEqual(File.ReadAllBytes(path)),"invalid migration preserves original vault");
+   vault.MigrateAccountUnlock(store,owner,restored.Device,remote);
+   using var migrated=store.Read(owner)!;
+   Check(migrated.Version==2&&migrated.HelloKey=="","migration rotates key and requires fresh Hello enrollment");
+   Check(vault.WindowsHello()==null&&!store.HelloAllowed(owner,oldHello.KeyName),"legacy Hello wrapper and consent are retired together");
+   Check(!legacyBytes.SequenceEqual(File.ReadAllBytes(path)),"migration rewrites encrypted payload with random key");
+   vault.Lock();Reject(()=>vault.Unlock("Legacy fixture password only!"),"old password cannot unlock migrated vault");
+   vault.UnlockAccount(migrated,remote,owner);
+   Check(vault.ReadPassword(id)=="fixture-secret-value"&&vault.List().Single().Id==key.Id,"migration preserves secret content and SSH identities");
+   var backups=Directory.GetDirectories(Path.Combine(directory,"MigrationBackups"));
+   using(var recoveryVault=new KeyVault(Path.Combine(backups.Single(),"keys.vault"))){recoveryVault.Unlock("Legacy fixture password only!");Check(recoveryVault.ReadPassword(id)=="fixture-secret-value","encrypted recovery copy remains usable");}
+   var migratedBytes=File.ReadAllBytes(path);var migratedCapsule=File.ReadAllBytes(Path.Combine(directory,"account-unlock.dpapi"));
+   SyncLocalBackup.Create(directory,true);
+   File.WriteAllBytes(path,legacyBytes);File.WriteAllBytes(Path.Combine(directory,"account-unlock.dpapi"),legacyCapsule);
+   vault.Lock();SyncLocalBackup.Recover(directory);
+   Check(migratedBytes.SequenceEqual(File.ReadAllBytes(path))&&migratedCapsule.SequenceEqual(File.ReadAllBytes(Path.Combine(directory,"account-unlock.dpapi"))),"interrupted transaction restores matching vault and device capsule");
+   using var recovered=store.Read(owner)!;vault.UnlockAccount(recovered,remote,owner);
+   Check(vault.Passwords().Count==2,"recovered account unlock preserves all passwords");
    Console.WriteLine($"PASS {count} account unlock checks");return 0;
-  }finally{CryptographicOperations.ZeroMemory(remote);vault.Lock();Directory.Delete(directory,true);}
+  }finally{CryptographicOperations.ZeroMemory(remote);vault.Lock();if(Path.GetFullPath(directory).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase))Directory.Delete(directory,true);}
  }
 }

@@ -16,10 +16,13 @@ static class CloudSyncChecks
         var info=KeyGeneration.Generate(source,"Portable fixture","ed25519");var id=source.StorePassword("Server fixture","Fixture server password");
         var key=RandomNumberGenerator.GetBytes(32);source.StoreSyncKey(owner,key);
         var data=new AppData{Profiles=[new ConnectionProfile{Id="profile-fixture",Name="Profile fixture",Host="fixture.invalid",Username="fixture",KeyId=info.Id,PasswordId=id}],Folders=["Connessioni","Fixture/Subfolder"],Machines=[new("machine-fixture","Fixture machine","fixture.invalid",22)],Snippets=[new("snippet-fixture","Fixture command","pwd")],Settings=new(ExternalEditor:"C:\\PrivateDevicePath\\editor.exe")};
+        data.Profiles.Add(new ConnectionProfile{Id="s3-sync-fixture",Name="Storage sync fixture",Protocol="native",Native=new(){Kind="s3"},Storage=new(){Browser=true,Bucket="fixture",Endpoint="https://fixture.invalid",Region="eu-west-1"},Username="fixture-access",Authentication="password",PasswordId=id,RemoteDirectory="projects"});
         var plain=VaultSyncCrypto.Capture(source,data,[]);var snapshot=VaultSyncCrypto.Parse(plain);
+        var storageProfile=snapshot.Data.Profiles.Single(p=>p.Id=="s3-sync-fixture");storageProfile.Validate();
+        Check(storageProfile.Storage.Browser&&storageProfile.Storage.Bucket=="fixture"&&storageProfile.Storage.Endpoint=="https://fixture.invalid"&&storageProfile.RemoteDirectory=="projects"&&storageProfile.PasswordId==id,"guided storage configuration and encrypted credential reference survive synchronization");
         Check(snapshot.Records.GetArrayLength()==2,"all portable keys and passwords exported, device sync key excluded");
         Check(!Encoding.UTF8.GetString(plain).Contains("PrivateDevicePath"),"device editor preferences excluded");
-        Check(snapshot.Data.Profiles[0].KeyId==info.Id&&snapshot.Data.Profiles[0].PasswordId==id,"profile credential identifiers preserved");
+        Check(snapshot.Data.Profiles.Single(p=>p.Id=="profile-fixture").KeyId==info.Id&&snapshot.Data.Profiles.Single(p=>p.Id=="profile-fixture").PasswordId==id,"profile credential identifiers preserved");
         var canonical=VaultSyncCrypto.Canonicalize(plain);Check(VaultSyncCrypto.Hash(canonical)==VaultSyncCrypto.Hash(plain),"canonical snapshot stable");
         var envelope=VaultSyncCrypto.Create(owner,password,key,plain);VaultSyncCrypto.Validate(envelope,owner);
         var encoded=JsonSerializer.Serialize(envelope,VaultSyncCrypto.Json);Check(!encoded.Contains(info.Name)&&!encoded.Contains("Fixture server password")&&!encoded.Contains(Convert.ToBase64String(key)),"online envelope contains no plaintext secrets or data key");

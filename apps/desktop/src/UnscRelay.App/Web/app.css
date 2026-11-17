@@ -168,3 +168,7 @@ html:has(#access-gate),body:has(#access-gate){overflow:hidden;overscroll-behavio
  .access-card .access-footnote{font-size:12px;padding-top:10px;margin-top:10px}
  .access-card .access-exit{min-height:40px;margin-top:8px;padding:8px 12px}
 }
+
+.storage-workspace{display:flex;flex-direction:column;gap:16px;min-height:0;flex:1;padding:16px;overflow:hidden}.storage-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.storage-toolbar input{flex:1 1 320px;min-width:140px}.storage-viewport{overflow:auto;min-height:0;flex:1;border:1px solid #344b3a;border-radius:6px}.storage-table{width:100%;border-collapse:collapse;text-align:left}.storage-table th{position:sticky;top:0;background:#172b20;padding:12px}.storage-table td{padding:11px 12px;border-bottom:1px solid #263b30;overflow-wrap:anywhere}.storage-table tr[aria-selected=true]{background:#293e29}.storage-table tbody tr:focus-visible{outline:2px solid #b6cd83;outline-offset:-2px}.storage-table tbody tr:hover{background:#1c3027}.storage-table .file-glyph{width:22px;height:22px;vertical-align:middle;margin-right:9px;color:#b5cb84}.storage-activity{display:flex;gap:16px;align-items:center}.storage-activity[hidden]{display:none}.storage-activity progress{flex:1}
+
+.storage-table{table-layout:fixed;min-width:100%}.storage-table thead th{z-index:2}.storage-table .storage-group-cell{padding:0}.storage-table .file-group{width:100%;text-align:left;min-height:38px}.storage-workspace>.file-view-options{max-width:800px}

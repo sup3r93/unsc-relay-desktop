@@ -28,7 +28,7 @@ public partial class MainWindow
     static readonly bool shutdownSmokeTest = Environment.GetCommandLineArgs().Contains("--update-shutdown-smoke-test");
     static readonly bool sequenceSmokeTest = Environment.GetCommandLineArgs().Contains("--sequence-smoke-test");
     static readonly bool smokeTest = accountBrowserSmokeTest || accessSmokeTest || recoverySmokeTest || nativeIntegrationSmokeTest || nativePackSmokeTest || localSessionsSmokeTest || windowExplorerSmokeTest || configLogsSmokeTest || conversionSmokeTest || presentationSmokeTest || presentationPreview || sequenceSmokeTest || filesSmokeTest || desktopSmokeTest || shutdownSmokeTest || Environment.GetCommandLineArgs().Contains("--smoke-test");
-    readonly string dataPath = smokeTest ? Path.Combine(AppContext.BaseDirectory, ".smoke-data",accountBrowserSmokeTest?"AccountBrowser":accessSmokeTest?"Access-"+Guid.NewGuid().ToString("N"):recoverySmokeTest?"Recovery":nativeIntegrationSmokeTest?"NativeIntegration":localSessionsSmokeTest?"LocalSessions":sequenceSmokeTest?"Sequences":configLogsSmokeTest?"ConfigLogs":windowExplorerSmokeTest?"WindowExplorer":"") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UNSC Relay");
+    readonly string dataPath = smokeTest ? Path.Combine(AppContext.BaseDirectory, ".smoke-data",accountBrowserSmokeTest?"AccountBrowser":accessSmokeTest?"Access-"+Guid.NewGuid().ToString("N"):recoverySmokeTest?"Recovery":nativeIntegrationSmokeTest?"NativeIntegration":localSessionsSmokeTest?"LocalSessions":sequenceSmokeTest?"Sequences":configLogsSmokeTest?"ConfigLogs":windowExplorerSmokeTest?"WindowExplorer":desktopSmokeTest?"Desktop":"") : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "UNSC Relay");
     ProfileStore store = null!; KeyVault vault = null!; HostKeyStore hosts = null!; AppData data = null!;
     bool keyGenerationBusy;
     readonly Dictionary<string, SshSession> sessions = [];
@@ -85,7 +85,7 @@ public partial class MainWindow
     }
     string Secret(string title, string text) => Dispatcher.Invoke(() => SecretDialog.Ask(this, title, text));
     bool Confirm(string text) => configLogsSmokeTest&&diagnosticConfirm!=null?diagnosticConfirm(text):Dispatcher.Invoke(() => MessageBox.Show(this, text, "UNSC Relay", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes);
-    bool Trust(HostKey key) => Confirm($"Prima connessione a {key.Host}:{key.Port}\n\n{key.Algorithm}\nSHA256: {key.Fingerprint}\n\nVerifica l'impronta con quella del server. Memorizzare questa chiave?");
+    bool Trust(HostKey key) => Confirm($"Prima connessione a {key.Host}:{key.Port}\n\n{(key.IsCertificateAuthority ? "CA del certificato host" : "Chiave host")} · {key.Algorithm}\nSHA256: {key.Fingerprint}\n\nVerifica l'impronta con il gestore del server. {(key.IsCertificateAuthority ? "La fiducia nella CA sara limitata a questo host e questa porta." : "Memorizzare questa chiave?")}");
     string? OpenFile(string title) { var d = new OpenFileDialog { Title = title }; return d.ShowDialog(this) == true ? d.FileName : null; }
     string? SaveFile(string title, string name) { if(configLogsSmokeTest&&diagnosticSave!=null)return diagnosticSave(title,name);var d = new SaveFileDialog { Title = title, FileName = name }; return d.ShowDialog(this) == true ? d.FileName : null; }
     static string S(JsonElement p, string k, string fallback = "") => p.TryGetProperty(k, out var v) ? v.GetString() ?? fallback : fallback;
@@ -125,6 +125,8 @@ public partial class MainWindow
         if((AppLocked||AccountLocked) && action is not("accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
         switch (action)
         {
+            case "nativeFilesOpen": return await OpenNativeFileWorkspace(p);
+            case "storageNativeOpen": case "storageOpen": case "storageList": case "storageTransfer": case "storageCompare": case "storageChange": case "storageCancel": return await StorageAction(action,p);
             case "diagnosticPreview": return DiagnosticReport();
             case "diagnosticExport": return ExportDiagnostic();
             case "accountAvailability": case "accountRegister": case "accountSecurity": case "accountProfile": case "accountLogout": case "accountLogin": case "accountStatus": case "accountSite": case "accountSetup": case "accountSync": case "accountUiBusy": return await CloudAction(action,p);
@@ -300,6 +302,7 @@ public partial class MainWindow
                 var sid = S(p, "sessionId"); if (!Guid.TryParse(sid, out _) || sessions.ContainsKey(sid) || desktopSessions.ContainsKey(sid) || localSessions.ContainsKey(sid) || !connectingSessions.Add(sid)) throw new ArgumentException("Identificatore sessione non valido.");
                 try
                 {
+                    if(selected.Storage.Browser)throw new IOException("Apri il browser storage dalla scheda dedicata.");
                     if(selected.Protocol=="native"&&selected.Native.Kind=="browser")return await ConnectBrowser(selected,sid);
                     var startupMacro=PrepareStartupMacro(selected,automatic);
                     if(selected.Protocol is "local" or "native")return await ConnectLocal(selected.Protocol=="local"?StartupMacros.LocalProfile(selected,startupMacro):selected,sid,p,startupMacro);
@@ -315,7 +318,7 @@ public partial class MainWindow
                 finally { connectingSessions.Remove(sid); }
             case "input": if(localSessions.TryGetValue(S(p,"sessionId"),out var localInput))localInput.Write(S(p,"data"));else await Session(p).WriteInputAsync(S(p, "data")); return null;
             case "resize": if(localSessions.TryGetValue(S(p,"sessionId"),out var localResize))await localResize.Resize(I(p,"cols",100),I(p,"rows",30));else await Session(p).ResizeTerminalAsync(I(p, "cols", 100), I(p, "rows", 30)); return null;
-            case "disconnect": if(localSessions.ContainsKey(S(p,"sessionId"))){await CloseLocal(S(p,"sessionId"));return null;}if (transferActive || QueueBusy || EditorsBusy || ExportBusy) throw new InvalidOperationException("Attendi la fine del trasferimento."); if (editBuffers.Values.Any(e => e.SessionId == S(p, "sessionId"))) throw new IOException("Chiudi prima gli editor associati alla sessione SFTP."); DisconnectDesktop(S(p, "sessionId")); await DisconnectWithHooks(S(p,"sessionId"),!p.TryGetProperty("automatic",out var autoDisconnect)||!autoDisconnect.GetBoolean()); return null;
+            case "disconnect": if(storageSessions.ContainsKey(S(p,"sessionId"))||nativeStorageParents.ContainsKey(S(p,"sessionId"))){if(advancedNativeChildren.Contains(S(p,"sessionId"))&&(fileJobs.Values.Any(j=>j.SessionId==S(p,"sessionId")&&j.Cancellation!=null)||editBuffers.Values.Any(e=>e.SessionId==S(p,"sessionId"))))throw new IOException("Metti in pausa la coda e chiudi gli editor prima di chiudere SFTP.");await CloseStorage(S(p,"sessionId"));return null;}if(localSessions.ContainsKey(S(p,"sessionId"))){await CloseLocal(S(p,"sessionId"));return null;}if (transferActive || QueueBusy || EditorsBusy || ExportBusy) throw new InvalidOperationException("Attendi la fine del trasferimento."); if (editBuffers.Values.Any(e => e.SessionId == S(p, "sessionId"))) throw new IOException("Chiudi prima gli editor associati alla sessione SFTP."); DisconnectDesktop(S(p, "sessionId")); await DisconnectWithHooks(S(p,"sessionId"),!p.TryGetProperty("automatic",out var autoDisconnect)||!autoDisconnect.GetBoolean()); return null;
             case "sftpList": return await Session(p).ListAsync(S(p, "path", "."));
             case "transfer": return await Transfer(p);
             case "cancelTransfer": transferCancellation?.Cancel(); return null;
@@ -432,7 +435,8 @@ public partial class MainWindow
         try
         {
             cloudTimer.Stop();cloudLifetime.Cancel();
-            await CloseAllLocal();
+            await CloseAllStorage();
+            await CloseAllLocal(!updateClosing);
             foreach (var id in editBuffers.Keys.ToArray()) CloseEditor(id);
             foreach (var id in desktopSessions.Keys.ToArray()) DisconnectDesktop(id);
             foreach(var id in sessions.Keys.ToArray())await DisconnectWithHooks(id,!updateClosing); sessions.Clear(); store.Save(data); StopAllRecordings(); StopBundledAgent(); vault.Lock(); updateToken = ""; lockTimer.Stop();

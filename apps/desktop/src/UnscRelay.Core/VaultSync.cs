@@ -162,7 +162,7 @@ public sealed partial class KeyVault
 
 public static class SyncLocalBackup
 {
-    private static readonly string[] Files = ["keys.vault", "profiles.json", "hostkeys.json", "account-sync.dpapi"];
+    private static readonly string[] Files = ["keys.vault", "profiles.json", "hostkeys.json", "account-sync.dpapi", "account-unlock.dpapi"];
     public static string Create(string directory, bool transaction)
     {
         var backup=Path.Combine(directory,"MigrationBackups",DateTime.UtcNow.ToString("yyyyMMddTHHmmss")+"-"+Guid.NewGuid().ToString("N"));

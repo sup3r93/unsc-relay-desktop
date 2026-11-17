@@ -25,10 +25,28 @@ public sealed partial class SshSession : IDisposable
     public event Action<string>? Status;
     bool RouteHealthy=>_route==null||_route.TransportHealthy;
     bool TransportHealthy=>!_disposed&&_ssh.IsConnected&&RouteHealthy;
-    public bool Connected => !_disposed && RouteHealthy && (Profile.Protocol == "sftp" ? _sftp.IsConnected : _ssh.IsConnected && !_interactiveClosed);
+    public bool Connected => !_disposed && RouteHealthy && (_nativeFileChannel!=null?_sftp.IsConnected:Profile.Protocol == "sftp" ? _sftp.IsConnected : _ssh.IsConnected && !_interactiveClosed);
     public Exception? LastFilesError {get;private set;}
     public bool FilesAvailable => !_disposed && RouteHealthy && _sftp.IsConnected;
 
+    private SshSession(ConnectionProfile profile,SftpClient files,Func<CancellationToken,Task<SftpClient>> open)
+    {
+        Profile=profile;
+        _sftp=files;
+        // Never connected: file channels are opened exclusively by the authenticated native master.
+        _ssh=new SshClient("external-channel.invalid","external","");
+        _nativeFileChannel=open;
+    }
+    public static async Task<SshSession> OpenNativeFiles(ConnectionProfile profile,NativeControlSession control,CancellationToken token=default,string? id=null)
+    {
+        var files=await control.OpenSftp(profile.Subsystem,token);
+        try
+        {
+            if(!string.IsNullOrWhiteSpace(profile.RemoteDirectory)&&profile.RemoteDirectory!=".")files.ChangeDirectory(profile.RemoteDirectory);
+            return new SshSession(profile,files,t=>control.OpenSftp(profile.Subsystem,t)){Id=id??Guid.NewGuid().ToString("N")};
+        }
+        catch{files.Dispose();throw;}
+    }
     public SshSession(ConnectionProfile profile, string password, byte[]? key, string passphrase, HostKeyStore hosts, Func<HostKey, bool> trust, Func<string, string> challenge, string certificate = "", string? endpointHost = null, int endpointPort = 0)
     {
         Profile = profile; profile.Validate();
@@ -91,6 +109,7 @@ public sealed partial class SshSession : IDisposable
     }
     public async Task ConnectAsync(int columns, int rows)
     {
+        if(_nativeFileChannel!=null)throw new InvalidOperationException("La sessione file nativa usa soltanto il master OpenSSH autenticato.");
         try
         {
             if (Profile.Protocol != "sftp")
@@ -110,6 +129,7 @@ public sealed partial class SshSession : IDisposable
     }
     public async Task ReconnectFilesAsync(bool automatic = true)
     {
+        if(_nativeFileChannel!=null)throw new IOException("Ripristina il collegamento OpenSSH originale per riaprire SFTP.");
         await _files.WaitAsync();
         try
         {
@@ -134,7 +154,7 @@ public sealed partial class SshSession : IDisposable
     }
     public bool CanWrite => Connected && _shell is { CanWrite: true };
     public void Write(string value) { if (_shell is { CanWrite: true }) _shell.Write(value); }
-    internal Task ConnectTransportAsync() => _ssh.ConnectAsync(CancellationToken.None);
+    internal Task ConnectTransportAsync() => _nativeFileChannel!=null?throw new InvalidOperationException("La sessione file nativa non apre trasporti SSH."):_ssh.ConnectAsync(CancellationToken.None);
     internal void OwnRoute(SshSession? route) => _route = route;
     internal int ForwardTo(string host, int port)
     {

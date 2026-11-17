@@ -111,7 +111,7 @@ namespace Renci.SshNet
     public partial class PrivateKeyFile : IPrivateKeySource, IDisposable
     {
         private const string PrivateKeyPattern = @"^-+ *BEGIN (?<keyName>\w+( \w+)*) *-+\r?\n((Proc-Type: 4,ENCRYPTED\r?\nDEK-Info: (?<cipherName>[A-Z0-9-]+),(?<salt>[a-fA-F0-9]+)\r?\n\r?\n)|(Comment: ""?[^\r\n]*""?\r?\n))?(?<data>([a-zA-Z0-9/+=]{1,80}\r?\n)+)(\r?\n)?-+ *END \k<keyName> *-+";
-        private const string PuTTYPrivateKeyPattern = @"^(?<keyName>PuTTY-User-Key-File)-(?<version>\d+): (?<algorithmName>[\w-]+)\r?\nEncryption: (?<encryptionType>[\w-]+)\r?\nComment: (?<comment>.*?)\r?\nPublic-Lines: \d+\r?\n(?<publicKey>(([a-zA-Z0-9/+=]{1,64})\r?\n)+)(Key-Derivation: (?<argon2Type>\w+)\r?\nArgon2-Memory: (?<argon2Memory>\d+)\r?\nArgon2-Passes: (?<argon2Passes>\d+)\r?\nArgon2-Parallelism: (?<argon2Parallelism>\d+)\r?\nArgon2-Salt: (?<argon2Salt>[a-fA-F0-9]+)\r?\n)?Private-Lines: \d+\r?\n(?<data>(([a-zA-Z0-9/+=]{1,64})\r?\n)+)+Private-MAC: (?<mac>[a-fA-F0-9]+)";
+        private const string PuTTYPrivateKeyPattern = @"^(?<keyName>PuTTY-User-Key-File)-(?<version>\d+): (?<algorithmName>[\w-]+)\r?\nEncryption: (?<encryptionType>[\w-]+)\r?\nComment: (?<comment>.*?)\r?\nPublic-Lines: \d+\r?\n(?<publicKey>(([a-zA-Z0-9/+=]{1,64})\r?\n)+)(Key-Derivation: (?<argon2Type>\w+)\r?\nArgon2-Memory: (?<argon2Memory>\d+)\r?\nArgon2-Passes: (?<argon2Passes>\d+)\r?\nArgon2-Parallelism: (?<argon2Parallelism>\d+)\r?\nArgon2-Salt: (?<argon2Salt>[a-fA-F0-9]+)\r?\n)?Private-Lines: \d+\r?\n(?<data>([a-zA-Z0-9/+=]{1,64}\r?\n)+)Private-MAC: (?<mac>[a-fA-F0-9]+)";
         private const string CertificatePattern = @"(?<type>[-\w]+@openssh\.com)\s(?<data>[a-zA-Z0-9\/+=]*)(\s+(?<comment>.*))?";
 
 #if NET
@@ -119,18 +119,18 @@ namespace Renci.SshNet
         private static readonly Regex PuTTYPrivateKeyRegex = GetPrivateKeyPuTTYRegex();
         private static readonly Regex CertificateRegex = GetCertificateRegex();
 
-        [GeneratedRegex(PrivateKeyPattern, RegexOptions.Multiline | RegexOptions.ExplicitCapture)]
+        [GeneratedRegex(PrivateKeyPattern, RegexOptions.Multiline | RegexOptions.ExplicitCapture, 1000)]
         private static partial Regex GetPrivateKeyRegex();
 
-        [GeneratedRegex(PuTTYPrivateKeyPattern, RegexOptions.Multiline | RegexOptions.ExplicitCapture)]
+        [GeneratedRegex(PuTTYPrivateKeyPattern, RegexOptions.Multiline | RegexOptions.ExplicitCapture, 1000)]
         private static partial Regex GetPrivateKeyPuTTYRegex();
 
-        [GeneratedRegex(CertificatePattern, RegexOptions.ExplicitCapture)]
+        [GeneratedRegex(CertificatePattern, RegexOptions.ExplicitCapture, 1000)]
         private static partial Regex GetCertificateRegex();
 #else
-        private static readonly Regex PrivateKeyRegex = new Regex(PrivateKeyPattern, RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.ExplicitCapture);
-        private static readonly Regex PuTTYPrivateKeyRegex = new Regex(PuTTYPrivateKeyPattern, RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.ExplicitCapture);
-        private static readonly Regex CertificateRegex = new Regex(CertificatePattern, RegexOptions.Compiled | RegexOptions.ExplicitCapture);
+        private static readonly Regex PrivateKeyRegex = new Regex(PrivateKeyPattern, RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.ExplicitCapture, TimeSpan.FromSeconds(1));
+        private static readonly Regex PuTTYPrivateKeyRegex = new Regex(PuTTYPrivateKeyPattern, RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.ExplicitCapture, TimeSpan.FromSeconds(1));
+        private static readonly Regex CertificateRegex = new Regex(CertificatePattern, RegexOptions.Compiled | RegexOptions.ExplicitCapture, TimeSpan.FromSeconds(1));
 #endif
 
         private readonly List<HostAlgorithm> _hostAlgorithms = new List<HostAlgorithm>();
@@ -292,7 +292,16 @@ namespace Renci.SshNet
 
             using (var sr = new StreamReader(privateKey))
             {
-                var text = sr.ReadToEnd();
+                // Relay bounds untrusted imports before regex parsing, including non-seekable streams.
+                var buffer = new char[1024 * 1024 + 1];
+                string text;
+                try
+                {
+                    var length = sr.ReadBlock(buffer, 0, buffer.Length);
+                    if (length == buffer.Length) throw new SshException("Private key file exceeds the 1 MiB limit.");
+                    text = new string(buffer, 0, length);
+                }
+                finally { Array.Clear(buffer, 0, buffer.Length); }
                 if (text.StartsWith("PuTTY-User-Key-File", StringComparison.Ordinal))
                 {
                     privateKeyMatch = PuTTYPrivateKeyRegex.Match(text);

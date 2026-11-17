@@ -1,3 +1,12 @@
+if(args.Length==1&&args[0]=="--native-recovery")return await NativeRecoveryChecks.Run();
+if(args.Length==1&&args[0]=="--account-transport")return await AccountTransportChecks.Run();
+if(args.Length==4&&args[0]=="--native-control")return await NativeControlChecks.Run(args[1],args[2],int.Parse(args[3]));
+if(args.Length==3&&args[0]=="--storage-untrusted-tls")return await StorageFilesChecks.RejectUntrustedTls(args[1],int.Parse(args[2]));
+if(args.Length==5&&args[0]=="--storage-files")return await StorageFilesChecks.Run(args[1],args[2],int.Parse(args[3]),args[4]);
+if(args.Length==4&&args[0]=="--native-hook-integration")return await NativeHookIntegrationChecks.Run(args[1],args[2],int.Parse(args[3]));
+if(args.Length==1&&args[0]=="--native-hooks-only")return await NativeHookChecks.Run();
+if(args.Length==1&&args[0]=="--native-host-certificates-only")return NativeHostCertificateChecks.Run();
+if(args.Length==1&&args[0]=="--key-parsing-only")return KeyParsingChecks.Run();
 if(args.Length==1&&args[0]=="--account-unlock-only")return AccountUnlockChecks.Run();
 if(args.Length==1&&args[0]=="--native-certificates-only")return NativeCertificateChecks.Run();
 if(args.Length==1&&args[0]=="--transfer-window-only"){

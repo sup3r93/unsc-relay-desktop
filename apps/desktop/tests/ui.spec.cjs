@@ -48,9 +48,14 @@ test.beforeEach(async ({ page, context }) => {
         if(action==='externalCertificateStatus')result=state.data.certificateProviders||[];
         if(action==='externalCertificateSave'){state.data.certificateProviders=payload.remove?[]:[payload.provider];result=state;}
         if(action==='nativeTask')result={id:'native-fixture-task',name:'Key generation',protocol:'native',native:{kind:'ssh',target:'tool'},authentication:'auto'};
+        if(action==='storageOpen'||action==='storageNativeOpen')result={followRoot:action==='storageNativeOpen'?'/fixture-root':null,entries:[{name:'folder',path:'folder',directory:true,size:0,type:'Cartella'},{name:'hello.txt',path:'hello.txt',directory:false,size:12,type:'txt',modified:'2026-11-16T12:00:00Z'}],path:''};
+        if(action==='storageList')result=payload.path?[{name:'nested.txt',path:payload.path+'/nested.txt',directory:false,size:4,type:'txt'}]:[{name:'folder',path:'folder',directory:true,size:0,type:'Cartella'},{name:'hello.txt',path:'hello.txt',directory:false,size:12,type:'txt'}];
+        if(['storageTransfer','storageChange','storageCancel'].includes(action))result={cancelled:false};
+        if(action==='storageCompare')result=window.fixtureCancelStorageComparison?{cancelled:true}:{local:{path:'C:\\Fixture\\compare.txt',text:'same\nlocal <script>\n',hash:'local',bom:false},remote:{path:payload.path,text:'same\nremote\n',hash:'remote',bom:false}};
         if(action==='localAvailability')result={shells:[{id:'cmd',name:'CMD',available:true},{id:'powershell',name:'Windows PowerShell',available:true},{id:'pwsh',name:'PowerShell 7',available:true},{id:'wsl',name:'WSL',available:true}],distributions:['Ubuntu','Debian']};
+        if(action==='nativeFilesOpen')result={sessionId:payload.sessionId,filesAvailable:true};
         if(action==='localShellFolder')result='C:\\Fixture\\Local';
-        if(action==='connect'){const protocol=state.data.profiles.find(p=>p.id===payload.profileId)?.protocol;result={sessionId:payload.sessionId,filesAvailable:['ssh','sftp'].includes(protocol),desktop:['rdp','vnc'].includes(protocol),local:protocol==='local',running:true}}
+        if(action==='connect'){const protocol=state.data.profiles.find(p=>p.id===payload.profileId)?.protocol;result={sessionId:payload.sessionId,filesAvailable:['ssh','sftp'].includes(protocol),desktop:['rdp','vnc'].includes(protocol),local:['local','native'].includes(protocol),running:true}}
         if(action==='recoverProfile')result={success:true,retryable:false,error:'',sessions:[...panes.values()].filter(p=>p.profile.id===payload.profileId&&!p.editor).map(p=>({sessionId:p.id,connected:true,filesAvailable:true,terminalRestarted:!p.fileWorkspace&&!p.connected}))};
         if(action==='sftpDirectory')result=payload.path==='.'?'/home/test':payload.path;
         if(action==='sftpHome')result='/home/test';
@@ -65,7 +70,7 @@ test.beforeEach(async ({ page, context }) => {
         if(action==='fileQueue')result=window.fixtureQueue||[];
         if(action==='filePlan')result={items:payload.paths.map(path=>({local:payload.direction==='upload'?path:'C:\\Fixture\\remote.txt',remote:payload.direction==='download'?path:'/home/test/local.txt',source:{size:100,modified:'2026-11-14T00:00:00Z'},target:window.fixtureConflict?{size:50,modified:'2026-11-13T00:00:00Z'}:null})),skippedLinks:0};
         if(action==='fileEnqueue'){window.fixtureQueue=payload.items.map((item,index)=>({id:'job-'+index,sessionId:payload.sessionId,name:'local.txt',local:item.local,remote:item.remote,direction:payload.direction,status:'In coda',progress:0,error:''}));result=window.fixtureQueue}
-        if(action==='filePause'){window.fixtureQueue.find(j=>j.id===payload.id).status='In pausa';result=window.fixtureQueue}
+        if(action==='filePause'){window.fixtureQueue.find(j=>j.id===payload.id).status='In pausa';result=window.fixtureQueue;queueMicrotask(()=>window.fixtureEmit('fileQueue',window.fixtureQueue))}
         if(action==='fileResume'){window.fixtureQueue.find(j=>j.id===payload.id).status='In coda';result=window.fixtureQueue}
 
         if(action==='localList')result={path:'C:\\Fixture',parent:'C:\\',entries:[{name:'local.txt',path:'C:\\Fixture\\local.txt',directory:false,size:24,modified:'2026-01-01'}]};
@@ -202,7 +207,7 @@ test('profile, splits, SFTP escaping and GitHub update workflow', async ({ page 
 });
 test('key manager and settings expose actual development state', async ({ page }) => {
   await page.locator('#keys-btn').click();
-  await expect(page.locator('#modal-body')).toContainText(/password principale/i);
+  await expect(page.locator('#modal-body')).toContainText(/Accedi con il tuo account/i);
   await page.locator('#modal-close').click();
   await page.locator('#settings-btn').click();
   await page.getByRole('tab',{name:'Funzionalità',exact:true}).click();
@@ -552,7 +557,7 @@ async function openNewConnection(page,type='ssh'){
  await page.locator('#new-profile').click();await page.locator('[data-session-type="'+type+'"]').click();
 }
 test('session picker cancels without saving and filters available session types',async({page})=>{
- await page.locator('#welcome-new').click();await expect(page.locator('.session-type-card')).toHaveCount(21);await expect(page.locator('[name=host]')).toHaveCount(0);
+ await page.locator('#welcome-new').click();await expect(page.locator('.session-type-card')).toHaveCount(23);await expect(page.locator('[name=host]')).toHaveCount(0);
  await page.getByLabel('Cerca tipo di sessione').fill('WSL');await expect(page.locator('.session-type-card:visible')).toHaveCount(1);await page.screenshot({path:'artifacts/ui-picker-filter-0119.png'});
  await page.getByRole('button',{name:'Annulla',exact:true}).click();expect(await page.evaluate(()=>testCalls.some(c=>['saveProfile','connect'].includes(c.action)))).toBe(false);
  await page.locator('#new-profile').click();await page.getByLabel('Cerca tipo di sessione').fill('does not exist');await expect(page.getByText('Nessun tipo corrisponde alla ricerca.',{exact:true})).toBeVisible();
@@ -617,7 +622,7 @@ test('bundled native profiles preserve original config and selected signature in
  await page.locator('#new-profile').click();await page.locator('[data-session-type=native-ssh]').click();await page.getByLabel('Nome',{exact:true}).fill('Native fixture');await page.getByLabel('Host, alias, URL o cartella',{exact:true}).fill('fixture-alias');await page.getByLabel('File config OpenSSH (opzionale)',{exact:true}).fill('C:\\Fixture\\config');await page.getByLabel('Firma richiesta / nessun fallback',{exact:true}).selectOption('ssh-mldsa44-ed25519');await page.getByRole('button',{name:'Salva sessione',exact:true}).click();const saved=await page.evaluate(()=>fixtureState.data.profiles[0]);expect(saved.native.configFile).toBe('C:\\Fixture\\config');expect(saved.native.executable).toBe('');expect(saved.native.signature).toBe('ssh-mldsa44-ed25519');await page.locator('.profile-item').dblclick();await expect(page.locator('#tabs .tab')).toHaveCount(1);await expect(page.locator('.terminal-pane')).toBeVisible();expect(await page.evaluate(()=>testCalls.some(c=>c.action==='vaultUnlock'))).toBe(false);
 });
 test('RDP advanced settings save gateway and explicit redirection flags',async({page})=>{
- await openNewConnection(page,'rdp');await page.locator('[name=name]').fill('Gateway fixture');await page.locator('[name=host]').fill('server.invalid');await page.getByRole('tab',{name:'Desktop remoto',exact:true}).click();await page.getByText('Opzioni RDP avanzate / Gateway e dispositivi',{exact:true}).click();await page.getByLabel('RD Gateway / nome DNS',{exact:true}).fill('gateway.invalid');await page.getByLabel('Condividi smart card',{exact:true}).check();await page.getByLabel('Usa piu monitor (apre il client Microsoft in una finestra dedicata)',{exact:true}).check();await page.getByRole('button',{name:'Salva connessione',exact:true}).click();const p=await page.evaluate(()=>fixtureState.data.profiles[0]);expect(p.rdp.gateway).toBe('gateway.invalid');expect(p.rdp.multiMonitor).toBe(true);expect(p.rdp.redirectSmartCards).toBe(true);expect(p.rdp.redirectDrives).toBe(false);
+ await openNewConnection(page,'rdp');await page.locator('[name=name]').fill('Gateway fixture');await page.locator('[name=host]').fill('server.invalid');await page.getByRole('tab',{name:'Desktop remoto',exact:true}).click();await page.getByText('Opzioni RDP avanzate / Gateway e dispositivi',{exact:true}).click();await page.getByLabel('RD Gateway / nome DNS',{exact:true}).fill('gateway.invalid');await page.getByLabel('Condividi smart card',{exact:true}).check();await page.getByLabel('Usa tutti i monitor (RDP incorporato, avvio a schermo intero)',{exact:true}).check();await page.getByRole('button',{name:'Salva connessione',exact:true}).click();const p=await page.evaluate(()=>fixtureState.data.profiles[0]);expect(p.rdp.gateway).toBe('gateway.invalid');expect(p.rdp.multiMonitor).toBe(true);expect(p.rdp.redirectSmartCards).toBe(true);expect(p.rdp.redirectDrives).toBe(false);
 });
 test('external CA policy exposes fingerprint renewal and keeps provider arguments explicit',async({page})=>{
  await page.evaluate(()=>{fixtureState.vault.unlocked=true;fixtureState.vault.exists=true;fixtureState.vault.keys=[{id:'11111111111111111111111111111111',name:'Fixture',fingerprint:'SHA256:fixture',publicKey:'ssh-ed25519 fixture'}];update(fixtureState);});await page.evaluate(()=>externalCertificateDialog(fixtureState.vault.keys[0]));await expect(page.getByRole('button',{name:'Salva provider',exact:true})).toBeVisible();await page.getByLabel('Impronta SHA256 della CA fidata',{exact:true}).fill('SHA256:fixture');await page.getByLabel('Principal / username',{exact:true}).fill('fixture');await page.getByLabel('Rinnova automaticamente vicino alla scadenza, con app aperta e archivio sbloccato',{exact:true}).check();await page.getByRole('button',{name:'Salva provider',exact:true}).click();const provider=await page.evaluate(()=>testCalls.find(c=>c.action==='externalCertificateSave').payload.provider);expect(provider.autoRenew).toBe(true);expect(provider.executable).toBe('');expect(provider.authorityFingerprint).toBe('SHA256:fixture');
@@ -880,4 +885,144 @@ test('manual Hello settings explain shared Windows identity and do not request l
  await expect(page.getByRole('button',{name:'Abilita Windows Hello su questo PC',exact:true})).toBeVisible();
  await expect(page.locator('#modal')).toContainText('Account Windows condiviso?');
  await expect(page.getByLabel('Password principale',{exact:true})).toHaveCount(0);
+});
+
+test('host manager distinguishes certificate authorities from ordinary server keys',async({page})=>{
+ await page.evaluate(()=>{fixtureState.hostKeys=[{host:'fixture.invalid',port:48221,algorithm:'ssh-ed25519',fingerprint:'fixture-authority-fingerprint',acceptedUtc:'2026-11-16T10:00:00Z',isCertificateAuthority:true},{host:'ordinary.invalid',port:22,algorithm:'ssh-ed25519',fingerprint:'fixture-server-fingerprint',acceptedUtc:'2026-11-16T10:00:00Z'}];update(fixtureState)});
+ await page.locator('#hosts-btn').click();const rows=page.locator('.host-table tbody tr');
+ await expect(rows.nth(0)).toContainText('CA · ssh-ed25519');await expect(rows.nth(1)).not.toContainText('CA ·');
+ await rows.nth(0).getByRole('button',{name:'Copia impronta fixture.invalid:48221',exact:true}).click();
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='agentCopyFingerprint').at(-1).payload.fingerprint)).toBe('fixture-authority-fingerprint');
+});
+test('native local hooks remain editable and do not leak into unrelated clients',async({page})=>{
+ await page.locator('#new-profile').click();await page.locator('[data-session-type=native-ssh]').click();
+ const section=page.locator('.native-hook-section');await expect(section.getByRole('heading',{name:'Automazione SSH'})).toBeVisible();await expect(section.getByText('Dopo connessione / remoto',{exact:true})).toHaveCount(1);
+ await page.getByLabel('Nome',{exact:true}).fill('Native hooks fixture');await page.getByLabel('Host, alias, URL o cartella',{exact:true}).fill('fixture.invalid');
+ const card=section.locator('.hook-card').filter({hasText:'Dopo connessione / locale'});await card.getByRole('checkbox').check();await card.getByLabel('Percorso EXE completo',{exact:true}).fill('C:\\Fixture\\safe-hook.exe');await card.getByLabel('Argomenti (uno per riga, senza virgolette aggiuntive)').fill('literal & value');
+ await page.getByRole('button',{name:'Salva sessione',exact:true}).click();let p=await page.evaluate(()=>fixtureState.data.profiles[0]);expect(p.hooks).toEqual([{phase:'after-connect',kind:'local',command:'C:\\Fixture\\safe-hook.exe',arguments:['literal & value'],enabled:true,timeoutSeconds:15}]);
+ await page.evaluate(()=>nativeProfileDialog(fixtureState.data.profiles[0]));await expect(page.locator('.native-hook-section').getByRole('checkbox',{name:'Dopo connessione / locale',exact:true})).toBeChecked();
+ await page.getByLabel('Client',{exact:true}).selectOption('telnet');await expect(page.locator('.native-hook-section')).toBeHidden();await page.getByRole('button',{name:'Salva sessione',exact:true}).click();p=await page.evaluate(()=>fixtureState.data.profiles[0]);expect(p.hooks).toEqual([]);
+});
+test('hardware algorithm cards separate token residency from hybrid disk keys',async({page})=>{
+ await openKeyGeneration(page);await page.getByText('Hardware, Ed448 e firme post-quantistiche',{exact:true}).click();await page.getByRole('button',{name:'Genera sul dispositivo',exact:true}).first().click();
+ await expect(page.locator('select[name=hardwareAlgorithm]')).toHaveCount(0);await expect(page.getByRole('radio')).toHaveCount(3);await expect(page.getByRole('radio',{name:'Ed25519-SK / FIDO2',exact:true})).toBeChecked();
+ const resident=page.getByRole('checkbox',{name:'Credenziale residente sul token (solo -sk)',exact:true});await resident.check();await page.getByRole('radio',{name:'ML-DSA-44 + Ed25519',exact:true}).check();await expect(resident).not.toBeChecked();await expect(resident).toBeDisabled();await page.getByRole('button',{name:'Genera con OpenSSH',exact:true}).click();
+ const payload=await page.evaluate(()=>testCalls.filter(c=>c.action==='nativeTask').at(-1).payload);expect(payload.algorithm).toBe('mldsa44-ed25519');expect(payload.resident).toBe(false);
+});
+
+
+test('guided storage profile stores separate credentials without JSON arguments', async ({page})=>{
+ await page.goto('https://relay.local/');await page.getByRole('button',{name:'＋ Nuova connessione',exact:true}).click();await page.getByRole('button',{name:'S3 · Browser file',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Nuovo browser S3',exact:true})).toBeVisible();await page.getByLabel('Nome',{exact:true}).fill('Fixture S3');await expect(page.getByLabel('Endpoint HTTPS · vuoto per AWS',{exact:true})).toHaveAttribute('required','');await page.getByLabel('Provider',{exact:true}).selectOption('AWS');await expect(page.getByLabel('Endpoint HTTPS · vuoto per AWS',{exact:true})).not.toHaveAttribute('required');await page.getByLabel('Provider',{exact:true}).selectOption('Other');await page.getByLabel('Endpoint HTTPS · vuoto per AWS',{exact:true}).fill('https://storage.example.com');await page.getByLabel('Bucket',{exact:true}).fill('fixture');await page.getByLabel('Access key ID',{exact:true}).fill('fixture-access');await page.getByLabel('Secret access key',{exact:true}).fill('fixture-secret');
+ await page.getByRole('button',{name:'Salva connessione',exact:true}).click();const saved=await page.evaluate(()=>window.testCalls.find(x=>x.action==='saveProfile').payload);expect(saved.storage.browser).toBe(true);expect(saved.native.argumentsJson).toBe('[]');expect(saved.password).toBe('fixture-secret');expect(saved.native).not.toHaveProperty('secret');
+ await page.evaluate(()=>connect(state.data.profiles[0]));await expect(page.locator('.storage-table')).toBeVisible();await expect(page.locator('.storage-table')).toContainText('hello.txt');await page.screenshot({path:'artifacts/storage-browser.png'});await page.locator('.storage-table tr').filter({hasText:'hello.txt'}).click({button:'right'});await expect(page.getByRole('menuitem',{name:'Copia percorso relativo',exact:true})).toBeVisible();await page.getByRole('menuitem',{name:'Copia percorso relativo',exact:true}).click();expect(await page.evaluate(()=>testCalls.filter(x=>x.action==='clipboardWrite').at(-1).payload.text)).toBe('hello.txt');await page.locator('.storage-table tr').filter({hasText:'hello.txt'}).click();await expect(page.getByRole('button',{name:'↓ Scarica file',exact:true})).toBeEnabled();await page.getByRole('button',{name:'↓ Scarica file',exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.testCalls.filter(x=>x.action==='storageTransfer').length)).toBe(1);
+ await page.locator('.storage-table tr').filter({hasText:'folder'}).dblclick();await expect(page.getByLabel('Percorso storage',{exact:true})).toHaveValue('folder');await page.getByRole('button',{name:'← Indietro',exact:true}).click();await expect(page.getByLabel('Percorso storage',{exact:true})).toHaveValue('');
+ await page.evaluate(()=>closePane(activeId));await expect(page.locator('.storage-table')).toHaveCount(0);expect(await page.evaluate(()=>window.testCalls.some(x=>x.action==='disconnect'))).toBe(true);
+});
+
+test('guided FTPS browser defaults to TLS and remains editable', async({page})=>{
+ await page.goto('https://relay.local/');await page.getByRole('button',{name:'＋ Nuova connessione',exact:true}).click();await page.getByRole('button',{name:'FTP / FTPS',exact:true}).click();
+ await expect(page.getByLabel('Protezione della connessione',{exact:true})).toHaveValue('explicit');await page.getByLabel('Nome',{exact:true}).fill('FTP fixture');await page.getByLabel('Host FTP',{exact:true}).fill('ftp.example.com');await page.getByLabel('Nome utente',{exact:true}).fill('fixture');await page.getByLabel('Protezione della connessione',{exact:true}).selectOption('implicit');await expect(page.getByLabel('Porta',{exact:true})).toHaveValue('990');await page.getByRole('button',{name:'Salva connessione',exact:true}).click();await page.evaluate(()=>profileDialog(state.data.profiles[0]));await expect(page.getByRole('heading',{name:'Modifica FTP / FTPS',exact:true})).toBeVisible();await expect(page.getByLabel('Host FTP',{exact:true})).toHaveValue('ftp.example.com');
+});
+
+
+test('native SFTP advanced workspace shares its terminal, queue, conflict comparison and editor',async({page})=>{
+ await page.goto('https://relay.local/');
+ await page.evaluate(async()=>{const p={id:'native-channel-fixture',name:'Native channel',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);await toggleFiles()});
+ await expect(page.locator('.file-columns')).toBeVisible();
+ const request=await page.evaluate(()=>testCalls.find(c=>c.action==='nativeFilesOpen').payload);expect(request.profileId).toBe('native-channel-fixture');expect(request.sourceSessionId).toBeTruthy();expect(request.sessionId).not.toBe(request.sourceSessionId);
+ await page.evaluate(()=>window.fixtureConflict=true);
+ await page.locator('.file-column[data-file-side=local] .workspace-file-row').click();await page.getByRole('button',{name:'↑ Carica selezionati',exact:true}).click();
+ await page.getByRole('button',{name:'Confronta differenze',exact:true}).click();await expect(page.getByLabel('Differenze fra i file',{exact:true})).toBeVisible();await page.screenshot({path:'artifacts/native-sftp-advanced-conflict.png'});
+ await page.getByRole('button',{name:'Riprendi',exact:true}).click();await expect(page.locator('.queue-row')).toContainText('local.txt');
+ await page.locator('.queue-row').getByRole('button',{name:'Pausa',exact:true}).click();await expect(page.locator('.queue-row')).toContainText('In pausa');
+ await page.locator('.file-column[data-file-side=remote] .workspace-file-row').dblclick();await expect(page.locator('.editor-workspace')).toBeVisible();
+ await page.evaluate(id=>fixtureEmit('storageStatus',{sessionId:id,connected:false,text:'Connessione OpenSSH terminata.'}),request.sessionId);
+ expect(await page.evaluate(id=>panes.get(id).files,request.sessionId)).toBe(false);
+});
+
+test('bundled OpenSSH offers remote hooks and dedicated SFTP options',async({page})=>{
+ await page.goto('https://relay.local/');await page.evaluate(()=>nativeProfileDialog(null,{kind:'ssh'}));
+ await expect(page.getByLabel('Cartella iniziale del browser SFTP',{exact:true})).toBeVisible();
+ await expect(page.getByLabel('Comando server SFTP personalizzato (opzionale)',{exact:true})).toBeVisible();
+ await expect(page.getByText('Dopo connessione / remoto',{exact:true})).toBeVisible();await expect(page.getByText('Prima disconnessione / remoto',{exact:true})).toBeVisible();
+});
+
+
+test('native recovery waits for authentication and restores the existing SFTP tab without startup input',async({page})=>{
+ await page.goto('https://relay.local/');
+ const ids=await page.evaluate(async()=>{const p={id:'native-recovery-fixture',name:'Native recovery',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);const shell=panes.get(activeId);const premature=shell.hadConnection===true;fixtureEmit('nativeAuthenticated',{sessionId:shell.id,connected:true,text:'OpenSSH autenticato'});await toggleFiles();return{shell:shell.id,files:activeId,premature};});
+ expect(ids.premature).toBe(false);
+ await page.evaluate(ids=>{fixtureEmit('localStatus',{sessionId:ids.shell,connected:false,text:'Interrotto'});fixtureEmit('storageStatus',{sessionId:ids.files,connected:false,text:'In attesa'});},ids);
+ await page.evaluate(async id=>reconnectPane(id),ids.shell);
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='connect').length)).toBe(1);
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='recoverProfile').length)).toBe(1);
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='input').length)).toBe(0);
+ await expect(page.getByRole('button',{name:'↑ Carica selezionati',exact:true})).toBeEnabled();
+});
+
+test('native follow directory is bound to its source and cannot leave the initial SFTP root',async({page})=>{
+ await page.goto('https://relay.local/');const source=await page.evaluate(async()=>{const p={id:'follow-native',name:'Follow native',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);const id=activeId;await openStorageWorkspace(p,panes.get(activeId));return id;});
+ await page.getByText('Segui cartella del terminale',{exact:true}).click();
+ await page.evaluate(id=>panes.get(id).term.write('\x1b]7;file://fixture/fixture-root/folder\x07'),source);
+ await expect(page.getByLabel('Percorso storage',{exact:true})).toHaveValue('folder');
+ const count=await page.evaluate(()=>testCalls.filter(c=>c.action==='storageList').length);
+ await page.evaluate(id=>panes.get(id).term.write('\x1b]7;file://fixture/outside\x07'),source);await expect(page.locator('.pane-status').last()).toContainText('fuori dalla radice');
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='storageList').length)).toBe(count);
+});
+
+
+test('native SFTP recovery replaces stale directory roots and disables follow when unavailable',async({page})=>{
+ await page.goto('https://relay.local/');
+ const ids=await page.evaluate(async()=>{const p={id:'recovery-root',name:'Recovery root',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);const shell=activeId;await openStorageWorkspace(p,panes.get(activeId));return{shell,files:activeId};});
+ await page.getByText('Segui cartella del terminale',{exact:true}).click();
+ await page.evaluate(async ids=>{const p=panes.get(ids.files);p.storageDisconnected('Interrotto');await p.storageRecovered({followRoot:'/new-root'});panes.get(ids.shell).term.write('\x1b]7;file://fixture/new-root/folder\x07');},ids);
+ await expect(page.getByLabel('Percorso storage',{exact:true})).toHaveValue('folder');
+ await page.evaluate(async id=>{await panes.get(id).storageRecovered({followRoot:null})},ids.files);
+ await expect(page.getByRole('checkbox',{name:'Segui cartella del terminale'})).toBeDisabled();
+ await expect(page.getByRole('checkbox',{name:'Segui cartella del terminale'})).not.toBeChecked();
+ await expect(page.getByRole('button',{name:'↑ Carica file',exact:true})).toBeEnabled();
+});
+
+
+test('native SFTP compares local text without downloading or overwriting and handles cancellation',async({page})=>{
+ await page.goto('https://relay.local/');
+ await page.evaluate(async()=>{const p={id:'native-diff-fixture',name:'Native comparison',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);await openStorageWorkspace(p,panes.get(activeId))});
+ const compare=page.getByRole('button',{name:'Confronta con file locale',exact:true});await expect(compare).toBeDisabled();
+ await page.locator('.storage-table tr').filter({hasText:'folder'}).click();await expect(compare).toBeDisabled();
+ await page.locator('.storage-table tr').filter({hasText:'hello.txt'}).click();await compare.click();
+ await expect(page.getByLabel('Differenze fra i file',{exact:true})).toContainText('+1 aggiunte');
+ await expect(page.locator('.diff-cell.added code')).toContainText('local <script>');
+ await expect(page.locator('.diff-cell.removed code')).toContainText('remote');
+ await page.screenshot({path:'artifacts/native-sftp-comparison.png'});
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='storageTransfer'||c.action==='storageChange').length)).toBe(0);
+ const request=await page.evaluate(()=>testCalls.find(c=>c.action==='storageCompare').payload);expect(request.path).toBe('hello.txt');expect(request).not.toHaveProperty('local');
+ await page.getByRole('button',{name:'Chiudi',exact:true}).click();await page.evaluate(()=>window.fixtureCancelStorageComparison=true);await compare.click();
+ await expect(page.getByLabel('Differenze fra i file',{exact:true})).toContainText('Confronto annullato');
+ expect(await page.evaluate(()=>testCalls.filter(c=>c.action==='storageTransfer'||c.action==='storageChange').length)).toBe(0);
+});
+
+
+test('native storage groups by type and persists accessible column widths and view choices',async({page})=>{
+ await page.goto('https://relay.local/');
+ await page.evaluate(async()=>{const p={id:'native-columns-fixture',name:'Native columns',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);await openStorageWorkspace(p,panes.get(activeId))});
+ await expect(page.getByLabel('Raggruppa file',{exact:true})).toHaveValue('type');
+ const files=page.locator('.storage-table');await expect(files.getByRole('button',{name:'▾ File TXT (1)',exact:true})).toBeVisible();await files.getByRole('button',{name:'▾ File TXT (1)',exact:true}).click();await expect(files.locator('tr[data-storage-path="hello.txt"]')).toHaveCount(0);await files.getByRole('button',{name:'▸ File TXT (1)',exact:true}).click();await expect(files.locator('tr[data-storage-path="hello.txt"]')).toBeVisible();
+ const grip=page.getByRole('separator',{name:'Larghezza Nome storage',exact:true});await grip.focus();await page.keyboard.press('Shift+ArrowRight');await expect(grip).toHaveAttribute('aria-valuenow','360');
+ await page.getByLabel('Raggruppa file',{exact:true}).selectOption('none');await page.getByLabel('Ordina file',{exact:true}).selectOption('size');await page.getByLabel('Ordine',{exact:true}).selectOption('desc');
+ expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('relay.fileColumns.v1.storage')).name)).toBe(360);
+ await page.reload();await page.evaluate(async()=>{const p={id:'native-columns-reopened',name:'Reopened columns',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);await openStorageWorkspace(p,panes.get(activeId))});
+ await expect(page.getByRole('separator',{name:'Larghezza Nome storage',exact:true})).toHaveAttribute('aria-valuenow','360');await expect(page.getByLabel('Raggruppa file',{exact:true})).toHaveValue('none');await expect(page.getByLabel('Ordina file',{exact:true})).toHaveValue('size');await expect(page.getByLabel('Ordine',{exact:true})).toHaveValue('desc');
+ await page.getByRole('separator',{name:'Larghezza Nome storage',exact:true}).focus();await page.keyboard.press('Home');await expect(page.getByRole('separator',{name:'Larghezza Nome storage',exact:true})).toHaveAttribute('aria-valuenow','320');
+});
+
+
+test('native advanced follow directory ignores other terminals of the same profile',async({page})=>{
+ await page.goto('https://relay.local/');
+ const ids=await page.evaluate(async()=>{const p={id:'native-exact-source',name:'Native source fixture',folder:'Connessioni',protocol:'native',authentication:'auto',native:{kind:'ssh',target:'fixture'},hooks:[],tunnels:[]};state.data.profiles.push(p);await connect(p);const first=activeId;await toggleFiles();const files=activeId;await connect(p);const second=activeId;activeId=files;refreshStage();panes.get(files).followDirectory.checked=true;return{first,second,files};});
+ await page.evaluate(ids=>panes.get(ids.second).term.write('\x1b]7;file://fixture/other-terminal\x07'),ids);
+ await expect.poll(()=>page.evaluate(ids=>panes.get(ids.second).cwd,ids)).toBe('/other-terminal');
+ expect(await page.evaluate(ids=>panes.get(ids.files).remotePath,ids)).toBe('/home/test');
+ await page.evaluate(ids=>panes.get(ids.first).term.write('\x1b]7;file://fixture/right-terminal\x07'),ids);
+ await expect(page.getByLabel('Cartella remota',{exact:true})).toHaveValue('/right-terminal');
 });

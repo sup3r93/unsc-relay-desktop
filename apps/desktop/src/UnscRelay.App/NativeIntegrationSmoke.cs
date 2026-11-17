@@ -29,6 +29,60 @@ public partial class MainWindow
                 lock (output) { checks["vaultKeyAuthenticatesInRealConPty"] = output.ToString().Contains("UNSC loopback fixture"); if (!checks["vaultKeyAuthenticatesInRealConPty"]) error = output.ToString(); }
             }
             var macroTrace=Path.Combine(Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT")!,"native-macro.txt");checks["nativeMacroArrivesAsAuthenticatedExec"]=File.Exists(macroTrace)&&File.ReadAllText(macroTrace)=="echo NATIVE-MACRO-FIXTURE\nexec \"${SHELL:-/bin/sh}\" -l";
+            var managedId=Guid.NewGuid().ToString("N");
+            var managed=profile with{Id=Guid.NewGuid().ToString("N"),Native=profile.Native with{ConfigFile="",Port=port},Hooks=[new("after-connect","remote","fixture-ok",[],true)]};
+            data.Profiles.Add(managed);
+            try
+            {
+                await ConnectLocal(managed,managedId,JsonSerializer.SerializeToElement(new{cols=100,rows=30}));
+                for(int i=0;i<240&&!nativeAuthenticated.Contains(managedId);i++)await Task.Delay(50);
+                checks["managedNativeAuthenticationSignal"]=nativeAuthenticated.Contains(managedId);
+                var originalPublicFolder=nativePublicFolders[managedId];
+                var browserId=Guid.NewGuid().ToString("N");
+                await StorageAction("storageNativeOpen",JsonSerializer.SerializeToElement(new{sessionId=browserId,sourceSessionId=managedId,profileId=managed.Id}));
+                checks["managedNativeSftpChannel"]=storageSessions.ContainsKey(browserId);
+                var advancedId=Guid.NewGuid().ToString("N");
+                await OpenNativeFileWorkspace(JsonSerializer.SerializeToElement(new{sessionId=advancedId,sourceSessionId=managedId,profileId=managed.Id}));
+                checks["nativeAdvancedWorkspaceConnected"]=sessions[advancedId].FilesAvailable;
+                var input=Path.Combine(dataPath,"native-queue.txt");await File.WriteAllTextAsync(input,"native queue original\r\n",new UTF8Encoding(false));
+                EnqueueFiles(JsonSerializer.SerializeToElement(new{sessionId=advancedId,direction="upload",conflict="new",items=new[]{new{local=input,remote="/native-queue.txt"}}}));
+                var nativeJob=fileJobs.Values.Single(j=>j.SessionId==advancedId);
+                if(nativeJob.Running!=null)await nativeJob.Running;
+                checks["nativeAdvancedQueueUpload"]=nativeJob.Status=="Completato"&&nativeJob.NativeSnapshot!=null;
+                var opened=JsonSerializer.SerializeToElement(await OpenRemoteEditor(JsonSerializer.SerializeToElement(new{sessionId=advancedId,path="/native-queue.txt"})),ProfileStore.Json);
+                var edit=editBuffers[opened.GetProperty("id").GetString()!];
+                await SaveRemoteEditor(edit,"native integrated editor\r\n",false);
+                checks["nativeIntegratedEditorSaves"]= (await sessions[advancedId].ReadTextAsync("/native-queue.txt")).Text=="native integrated editor\r\n";
+                PrepareExternalEditor(edit);edit.AutoUpload=true;await File.WriteAllTextAsync(edit.Local,"native external editor\r\n",new UTF8Encoding(false));
+                for(int i=0;i<100&&edit.Original.Text!="native external editor\r\n";i++)await Task.Delay(50);
+                checks["nativeExternalEditorAutoUpload"]=edit.Original.Text=="native external editor\r\n";
+                CloseEditor(edit.Id);
+                var bulk=Path.Combine(dataPath,"native-resume.bin");await File.WriteAllBytesAsync(bulk,System.Security.Cryptography.RandomNumberGenerator.GetBytes(1048577));
+                EnqueueFiles(JsonSerializer.SerializeToElement(new{sessionId=advancedId,direction="upload",conflict="new",bandwidthKiB=256,items=new[]{new{local=bulk,remote="/native-resume.bin"},new{local=bulk,remote="/native-paused.bin"}}}));
+                var interrupted=fileJobs.Values.Single(j=>j.Request.Remote=="/native-resume.bin");var manuallyPaused=fileJobs.Values.Single(j=>j.Request.Remote=="/native-paused.bin");
+                for(int i=0;i<200&&(interrupted.Progress==0||manuallyPaused.Progress==0);i++)await Task.Delay(25);
+                manuallyPaused.Cancellation!.Cancel();await manuallyPaused.Running!;
+                checks["nativeManualPauseBeforeOutage"]=manuallyPaused.Status=="In pausa";
+                var fixtureRoot=Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT")!;
+                File.WriteAllText(Path.Combine(fixtureRoot,"drop-network.request"),"fixture");
+                for(int i=0;i<300&&(nativeControls.ContainsKey(managedId)||nativeAuthenticated.Contains(managedId));i++)await Task.Delay(50);
+                checks["nativeWireLossRetainsBrowserIdentity"]=!nativeAuthenticated.Contains(managedId)&&!nativeControls.ContainsKey(managedId)&&nativeStorageParents.GetValueOrDefault(browserId)==managedId&&!storageSessions.ContainsKey(browserId);
+                await Task.Delay(600);
+                var recovered=await RecoverNativeProfile(managed,JsonSerializer.SerializeToElement(new{cols=100,rows=30}));
+                var recoveredJson=JsonSerializer.SerializeToElement(recovered,ProfileStore.Json);
+                checks["managedNativeRecoveryRebindsSftp"]=recoveredJson.GetProperty("success").GetBoolean()&&nativeAuthenticated.Contains(managedId)&&storageSessions.ContainsKey(browserId);
+                await storageSessions[browserId].List("");
+                checks["nativeAdvancedWorkspaceRestored"]=sessions.TryGetValue(advancedId,out var restoredFiles)&&restoredFiles.FilesAvailable;
+                checks["nativeAdvancedEditorFileSurvivesRecovery"]=(await sessions[advancedId].ReadTextAsync("/native-queue.txt")).Text=="native external editor\r\n";
+                if(interrupted.Running!=null)await interrupted.Running;
+                checks["nativeInterruptedQueueResumesAfterRecovery"]=interrupted.Status=="Completato";if(interrupted.Status!="Completato")error="Native queue: "+interrupted.Status+" / "+interrupted.Error;
+                checks["nativeManualPauseNotResumedByRecovery"]=manuallyPaused.Status=="In pausa";
+                checks["nativeRecoveryUsesNewPublicDirectory"]=nativePublicFolders[managedId]!=originalPublicFolder;
+                checks["nativeRecoveryRefreshesFollowRoot"]=recoveredJson.GetProperty("sessions").EnumerateArray().Any(item=>item.GetProperty("sessionId").GetString()==browserId&&item.GetProperty("followRoot").GetString()=="/fixture-root");
+                await Task.Delay(200);
+                checks["nativeWireRecoveryDoesNotReplayHook"]=File.ReadAllLines(Path.Combine(fixtureRoot,"hook-count.txt")).Length==1;
+            }
+            finally{await CloseLocal(managedId,false);data.Profiles.Remove(managed);}
             var certificateKey=KeyGeneration.Generate(vault,"Certificate fixture user","ed25519");var ca=KeyGeneration.Generate(vault,"Certificate fixture CA","ed25519");certificateKey=vault.IssueCertificate(certificateKey.Id,ca.Id,"test-cert",1);
             var certId="certificate fixture "+Guid.NewGuid().ToString("N");var certificateProfile=profile with{Id=Guid.NewGuid().ToString("N"),Name="Native certificate fixture",KeyId=certificateKey.Id,Native=profile.Native with{Target="test-cert@127.0.0.1"}};
             try{
@@ -61,7 +115,7 @@ public partial class MainWindow
         }
         catch (Exception ex) { error = ex.ToString(); }
         finally { StopBundledAgent(); await EndNative(id); }
-        bool success = error == null && checks.Count == 14 && checks.Values.All(x => x);
+        bool success = error == null && checks.Count == 30 && checks.Values.All(x => x);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "native-integration-smoke-result.json"), JsonSerializer.Serialize(new { success, checks, error }, ProfileStore.Json)); CompleteSmoke(success);
     }
 }

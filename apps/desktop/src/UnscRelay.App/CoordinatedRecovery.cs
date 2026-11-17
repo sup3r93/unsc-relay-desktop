@@ -43,7 +43,7 @@ public partial class MainWindow
     object SetRecoveryPolicy(JsonElement payload)
     {
         var profileId = S(payload, "profileId"); var profile = data.Profiles.Single(p => p.Id == profileId);
-        if (profile.Protocol is not ("ssh" or "sftp")) throw new ArgumentException("Ripristino coordinato disponibile per SSH e SFTP integrati.");
+        if (profile.Protocol is not ("ssh" or "sftp")&&!NativeRecovery.Supported(profile)) throw new ArgumentException("Ripristino coordinato disponibile per SSH e SFTP integrati.");
         bool enabled = payload.GetProperty("enabled").GetBoolean();
         if (enabled) automaticRecoveryProfiles.Add(profileId); else automaticRecoveryProfiles.Remove(profileId);
         return new { enabled };
@@ -71,6 +71,8 @@ public partial class MainWindow
     async Task<object> RecoverProfileCore(string profileId, JsonElement payload)
     {
         bool automatic = payload.TryGetProperty("automatic", out var a) && a.GetBoolean();
+        var savedNative=data.Profiles.SingleOrDefault(p=>p.Id==profileId);
+        if(savedNative!=null&&NativeRecovery.Supported(savedNative))return await RecoverNativeProfile(savedNative,payload);
         var group = sessions.Values.Where(s => s.Profile.Id == profileId && s.Profile.Protocol is "ssh" or "sftp").ToArray();
         if (group.Length == 0) throw new IOException("Nessuna sessione da ripristinare. Riapri la connessione.");
         foreach (var previous in group) ValidateRecovery(previous, automatic);
