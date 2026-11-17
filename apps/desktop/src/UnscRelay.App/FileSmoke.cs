@@ -46,7 +46,7 @@ public partial class MainWindow
             checks["lastDirectoriesPersistByEndpoint"] = store.Load().FileLocations[profile.Id].Remote == "/tree" && store.Load().FileLocations[profile.Id].Host == profile.Host;
             var opened = JsonSerializer.SerializeToElement(await OpenRemoteEditor(P(new { sessionId = sid, path = "/editor.txt" })), ProfileStore.Json); var editor = editBuffers[opened.GetProperty("id").GetString()!];
             await SaveRemoteEditor(editor, "after\r\n", false); checks["nativeEditorSavesText"] = File.ReadAllText(Path.Combine(root, "editor.txt")) == "after\r\n";
-            PrepareExternalEditor(editor); editor.AutoUpload = true; File.WriteAllText(editor.Local, "external saved fixture\r\n");
+            PrepareExternalEditor(editor); checks["externalEditorCopyUsesSafeLeaf"] = Path.GetFileName(editor.Local) == "relay-editor.txt"; editor.AutoUpload = true; File.WriteAllText(editor.Local, "external saved fixture\r\n");
             for (var i = 0; i < 80 && File.ReadAllText(Path.Combine(root, "editor.txt")) != "external saved fixture\r\n"; i++) await Task.Delay(50);
             checks["externalEditorWatcherPublishesSavedContent"] = File.ReadAllText(Path.Combine(root, "editor.txt")) == "external saved fixture\r\n"; editor.AutoUpload = false;
             File.WriteAllText(Path.Combine(root, "editor.txt"), "outside change");
@@ -94,7 +94,7 @@ public partial class MainWindow
         }
         catch (Exception ex) { error = ex.ToString(); }
         finally { foreach (var session in sessions.Values) session.Dispose(); sessions.Clear(); foreach (var id in editBuffers.Keys.ToArray()) CloseEditor(id); }
-        var success = error == null && checks.Count == 25 && checks.Values.All(v => v);
+        var success = error == null && checks.Count == 26 && checks.Values.All(v => v);
         File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "files-smoke-result.json"), JsonSerializer.Serialize(new { success, checks, error }, ProfileStore.Json)); CompleteSmoke(success);
     }
 }

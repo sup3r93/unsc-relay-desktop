@@ -9,7 +9,18 @@ public static class UpdateBackup
     public static readonly string[] DataFiles = ["profiles.json", "keys.vault", "hostkeys.json", "github-token.dpapi", "transfers.json", "account-sync.dpapi"];
     public static string Create(string dataDirectory, string version)
     {
-        var directory = Path.Combine(dataDirectory, "UpdateBackups", DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+        dataDirectory = Path.GetFullPath(dataDirectory);
+        FolderSync.CheckLocalParents(dataDirectory);
+        var backupRoot = Path.Combine(dataDirectory, "UpdateBackups");
+        FolderSync.CheckLocalParents(backupRoot);
+        // Validate the complete allowlist before creating a backup or copying any file.
+        foreach (var name in DataFiles)
+        {
+            var source = Path.Combine(dataDirectory, name);
+            if (File.Exists(source) && File.GetAttributes(source).HasFlag(FileAttributes.ReparsePoint))
+                throw new IOException("Il backup non può includere file collegati: " + name);
+        }
+        var directory = Path.Combine(backupRoot, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var hashes = new Dictionary<string, string>();
         foreach (var name in DataFiles)

@@ -23,6 +23,7 @@ jobs:
         with:
           node-version: '24'
       - run: node .github/scripts/test-community-policy.cjs
+      - run: node apps/desktop/tests/follow-shell.cjs --validate-only
   desktop:
     name: Desktop checks
     runs-on: windows-latest
@@ -34,6 +35,8 @@ jobs:
           check-latest: false
           skip-lts-prepass: true
       - run: dotnet build apps/desktop/UnscRelay.sln --configuration Release
+      - name: Check security boundary regressions
+        run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --security-review
       - name: Check encrypted vault migration
         run: dotnet apps/desktop/tests/UnscRelay.Tests/bin/Release/net10.0/UnscRelay.Tests.dll --cloud-sync-only
       - name: Check bounded private key parsing
