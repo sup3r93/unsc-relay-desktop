@@ -10,6 +10,6 @@ function setupFollowDirectory(pane,toolbar){
 
 async function enableBashDirectory(shell,follow){
 if(!shell)return toast('Apri una tab SSH connessa dello stesso profilo.',true);if(shell.directoryIntegration)return toast('Rilevamento già attivato in questa sessione.');if(!await call('confirmAction',{text:'Aggiungere una funzione temporanea al prompt della sessione Bash «'+shell.profile.name+'» per comunicare la cartella? Non verranno modificati file di configurazione.'}))return;
-  const command=`__relay_cwd(){ local p="$PWD"; p="\${p//%/%25}"; p="\${p// /%20}"; p="\${p//#/%23}"; p="\${p//\\?/%3F}"; printf '\\033]7;file://%s%s\\007' "$HOSTNAME" "$p"; }; PROMPT_COMMAND+=(__relay_cwd); __relay_cwd\r`;
+  const command="__relay_cwd(){ local p=\"$PWD\"; p=\"${p//%/%25}\"; p=\"${p// /%20}\"; p=\"${p//#/%23}\"; p=\"${p//\\?/%3F}\"; printf '\\033]7;file://%s%s\\007' \"$HOSTNAME\" \"$p\"; }; PROMPT_COMMAND+=(__relay_cwd); __relay_cwd\r";
   await call('input',{sessionId:shell.id,data:command});shell.directoryIntegration=true;if(follow)follow.checked=true;toast('Rilevamento richiesto alla sessione Bash corrente.')
 }

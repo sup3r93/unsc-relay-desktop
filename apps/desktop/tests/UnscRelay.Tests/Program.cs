@@ -1,3 +1,4 @@
+if(args.Length==1&&args[0]=="--security-review")return SecurityReviewChecks.Run();
 if(args.Length==1&&args[0]=="--native-recovery")return await NativeRecoveryChecks.Run();
 if(args.Length==1&&args[0]=="--account-transport")return await AccountTransportChecks.Run();
 if(args.Length==4&&args[0]=="--native-control")return await NativeControlChecks.Run(args[1],args[2],int.Parse(args[3]));

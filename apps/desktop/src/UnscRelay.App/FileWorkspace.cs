@@ -229,14 +229,14 @@ public partial class MainWindow
         var exe = choose ? OpenFile("Seleziona l’EXE dell’editor (es. Notepad++ o Code)") : data.Settings.ExternalEditor.Length>0?data.Settings.ExternalEditor:Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "notepad.exe");
         if (exe == null) return; if (!File.Exists(exe))throw new IOException("Editor non trovato. Sceglilo di nuovo in Impostazioni → Editor.");if (!exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) throw new ArgumentException("Seleziona un programma EXE.");
         PrepareExternalEditor(edit);
-        Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false, ArgumentList = { edit.Local } });
+        Process.Start(ExternalEditorFile.Launch(exe, edit.Local));
     }
     void PrepareExternalEditor(EditBuffer edit)
     {
         if (edit.Local.Length == 0)
         {
             var dir = Path.Combine(dataPath, "Editor", edit.Id); Directory.CreateDirectory(dir);
-            var name = Path.GetFileName(edit.Original.Path); if (name.Length == 0 || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) name = "remote.txt";
+            var name = ExternalEditorFile.CopyName(edit.Original.Path);
             edit.Local = Path.Combine(dir, name); File.WriteAllText(edit.Local, edit.Original.Text, new UTF8Encoding(edit.Original.Bom));
             edit.Watcher = new FileSystemWatcher(dir) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName, EnableRaisingEvents = true };
             void Changed() => Dispatcher.BeginInvoke(async () =>
