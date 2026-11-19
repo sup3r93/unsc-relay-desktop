@@ -15,6 +15,7 @@ public partial class MainWindow
         public string SessionId { get; set; } = "";
         public string ProfileId { get; init; } = "";
         public string? NativeSnapshot { get; init; }
+        public BridgeOrigin? Origin {get;init;}
         public string Host { get; init; } = "";
         public int Port { get; init; }
         public string Username { get; init; } = "";
@@ -24,14 +25,15 @@ public partial class MainWindow
         public string Error { get; set; } = "";
         public CancellationTokenSource? Cancellation { get; set; }
         public bool RecoveryPaused { get; set; }
+        public bool ProductionApproved {get;set;}
         public Task? Running { get; set; }
     }
     readonly Dictionary<string, FileJob> fileJobs = [];
     SemaphoreSlim transferSlots = new(2, 2);
     int transferParallelism = 2;
     bool QueueBusy => recoveryTasks.Count>0 || fileJobs.Values.Any(j => j.Status is "In coda" or "Trasferimento" or "Pausa richiesta");
-    object QueueSnapshot() => fileJobs.Values.Select(j => new { j.Id, j.SessionId, j.Host, j.Port, name = Path.GetFileName(j.Request.Local), j.Request.Local, j.Request.Remote, direction = j.Request.Upload ? "upload" : "download", j.Status, j.Progress, j.Error }).ToArray();
-    sealed record JobJournal(string Id, string ProfileId, string Host, int Port, string Username, TransferRequest Request, string Status, double Progress, string? NativeSnapshot=null);
+    object QueueSnapshot() => fileJobs.Values.Select(j => new { j.Id, j.SessionId, j.Host, j.Port, name = Path.GetFileName(j.Request.Local), j.Request.Local, j.Request.Remote, direction = j.Origin!=null?"bridge":j.Request.Upload ? "upload" : "download", j.Status, j.Progress, j.Error }).ToArray();
+    sealed record JobJournal(string Id, string ProfileId, string Host, int Port, string Username, TransferRequest Request, string Status, double Progress, string? NativeSnapshot=null,BridgeOrigin? Origin=null,int Version=1);
     void LoadFileQueue()
     {
         var path = Path.Combine(dataPath, "transfers.json"); if (!File.Exists(path)) return;
@@ -39,8 +41,8 @@ public partial class MainWindow
         {
             var journal = JsonSerializer.Deserialize<List<JobJournal>>(File.ReadAllText(path), ProfileStore.Json) ?? [];
             foreach (var j in journal.Take(5000))
-                if (!string.IsNullOrWhiteSpace(j.Host) && j.Port is > 0 and <= 65535 && Guid.TryParse(j.Id, out _) && j.Id == j.Request.Id && data.Profiles.Any(p => p.Id == j.ProfileId))
-                    fileJobs.TryAdd(j.Id, new() { Id = j.Id, ProfileId = j.ProfileId, NativeSnapshot=j.NativeSnapshot, Host = j.Host, Port = j.Port, Username = j.Username, Request = j.Request, Status = "In pausa", Progress = j.Progress });
+                if (j!=null&&j.Request!=null&&j.Version is 1 or 2&&(j.Version!=1||j.Request.Permissions==null||j.Request.Permissions is >=0 and <=4095)&&!string.IsNullOrWhiteSpace(j.Host) && j.Port is > 0 and <= 65535 && Guid.TryParse(j.Id, out _) && j.Id == j.Request.Id && data.Profiles.Any(p => p.Id == j.ProfileId))
+                    fileJobs.TryAdd(j.Id, new() { Id = j.Id, ProfileId = j.ProfileId, NativeSnapshot=j.NativeSnapshot, Origin=j.Origin, Host = j.Host, Port = j.Port, Username = j.Username, Request = j.Version==1&&j.Request.Permissions is{} oldMode?j.Request with{Permissions=SftpPermissions.FromLegacyBits(oldMode)}:j.Request, Status = "In pausa", Progress = j.Progress });
         }
         catch (Exception ex) when (ex is IOException or JsonException) { /* An invalid journal never starts work or changes profiles. */ }
     }
@@ -51,33 +53,32 @@ public partial class MainWindow
     }
     void EmitQueue(bool persist = true)
     {
-        try { if (persist) AtomicFile.Write(Path.Combine(dataPath, "transfers.json"), JsonSerializer.SerializeToUtf8Bytes(fileJobs.Values.Where(j => j.Status is not ("Completato" or "Saltato")).Select(j => new JobJournal(j.Id, j.ProfileId, j.Host, j.Port, j.Username, j.Request, j.Status, j.Progress,j.NativeSnapshot)), ProfileStore.Json)); }
+        try { if (persist) AtomicFile.Write(Path.Combine(dataPath, "transfers.json"), JsonSerializer.SerializeToUtf8Bytes(fileJobs.Values.Where(j => j.Status is not ("Completato" or "Saltato")).Select(j => new JobJournal(j.Id, j.ProfileId, j.Host, j.Port, j.Username, j.Request, j.Status, j.Progress,j.NativeSnapshot,j.Origin,2)), ProfileStore.Json)); }
         catch (IOException) { Emit("notice", new { text = "Impossibile salvare la coda: i trasferimenti restano disponibili fino alla chiusura." }); }
         Emit("fileQueue", QueueSnapshot());
     }
     async Task RunJob(FileJob job, bool resume, bool automaticRecovery=false)
     {
-        job.Cancellation = new(); var token = job.Cancellation.Token; job.RecoveryPaused=false; job.Status = "In coda"; job.Error = ""; EmitQueue();
+        var generation=authenticationGeneration;job.Cancellation = CancellationTokenSource.CreateLinkedTokenSource(accountOperationStop.Token); var token = job.Cancellation.Token; job.RecoveryPaused=false; job.Status = "In coda"; job.Error = ""; EmitQueue();
         var acquired = false;
         try
         {
-            if(CriticalUpdateRequired)throw new OperationCanceledException();
+            RequireOperationSession(generation);if(automaticRecovery&&job.Origin!=null)throw new IOException("Riprendi manualmente la copia tra server dopo aver verificato entrambe le connessioni.");
             await Task.Run(()=>TransferWindow.Wait(job.Request.WindowStartMinute,job.Request.WindowEndMinute,token),token);
-            await transferSlots.WaitAsync(token); acquired = true;
+            await transferSlots.WaitAsync(token); acquired = true;RequireOperationSession(generation);
             if (!sessions.TryGetValue(job.SessionId, out var session)) throw new IOException("Riapri la sessione SFTP prima di trasferire.");
             CheckJobEndpoint(job, session);if(automaticRecovery){if(nativeStorageParents.TryGetValue(session.Id,out var nativeParent))ValidateNativeRecovery(nativeParent,session.Profile,true);else ValidateRecovery(session,true);}
-            job.Status = "Trasferimento"; EmitQueue(); var last = DateTime.MinValue;
-            var transferred = await session.TransferAdvancedAsync(job.Request with { Resume = resume, AutomaticRecovery=automaticRecovery }, (done, total) =>
-            {
-                if (DateTime.UtcNow - last < TimeSpan.FromMilliseconds(150)) return; last = DateTime.UtcNow;
-                Dispatcher.BeginInvoke(() => { job.Progress = total > 0 ? Math.Min(100, done * 100d / total) : 0; EmitQueue(false); });
-            }, token, checkpoint => Dispatcher.Invoke(() => { if(job.Request.Checkpoint==null){job.Request=job.Request with{Checkpoint=checkpoint};EmitQueue();} }));
+            if(job.Request.Upload&&!job.ProductionApproved)job.ProductionApproved=ConfirmProductionOperation(session.Profile,"Caricamento di file",resource:job.Request.Remote);RequireOperationSession(generation);job.Status = "Trasferimento"; EmitQueue(); var last = DateTime.MinValue;
+            Action<ulong,long> report=(done,total)=>{if(DateTime.UtcNow-last<TimeSpan.FromMilliseconds(150))return;last=DateTime.UtcNow;Dispatcher.BeginInvoke(()=>{job.Progress=total>0?Math.Min(100,done*100d/total):0;EmitQueue(false);});};
+            Action<TransferCheckpoint> observed=checkpoint=>Dispatcher.Invoke(()=>{if(job.Request.Checkpoint==null){job.Request=job.Request with{Checkpoint=checkpoint};EmitQueue();}});
+            var request=job.Request with{Resume=resume,AutomaticRecovery=automaticRecovery};
+            var transferred=job.Origin is{} origin?await BridgeSource(job).BridgeTransferAsync(session,origin.Path,request,report,token,observed):await session.TransferAdvancedAsync(request,report,token,observed);
             job.Status = transferred ? "Completato" : "Saltato"; job.Progress = 100; job.RecoveryPaused=false;
         }
         catch (OperationCanceledException) { job.Status = job.RecoveryPaused ? "Attesa connessione" : "In pausa"; }
         catch (Exception ex)
         {
-            if(!token.IsCancellationRequested && NetworkReconnect.IsTransient(ex)){MarkRecoveryNeeded(job.SessionId,ex);job.RecoveryPaused=true;}
+            if(job.Origin==null&&!token.IsCancellationRequested && NetworkReconnect.IsTransient(ex)){MarkRecoveryNeeded(job.SessionId,ex);job.RecoveryPaused=true;}
             job.Status = job.RecoveryPaused ? "Attesa connessione" : token.IsCancellationRequested ? "In pausa" : "Errore"; job.Error = ex.Message;
         }
         finally { if (acquired) transferSlots.Release(); job.Cancellation.Dispose(); job.Cancellation = null; EmitQueue(); }
@@ -97,7 +98,7 @@ public partial class MainWindow
             if (upload && !(isDirectory ? Directory.Exists(local) : File.Exists(local))) throw new FileNotFoundException("La sorgente locale non esiste.");
             if (!upload && !parents && !Directory.Exists(Path.GetDirectoryName(local))) throw new DirectoryNotFoundException("Seleziona una cartella locale esistente.");
             var conflict = S(item, "conflict", S(payload, "conflict", "ask")); if (conflict is not ("ask" or "replace" or "skip" or "new" or "resume")) throw new ArgumentException("Regola conflitto non valida.");
-            var mode = S(payload, "permissions"); short? permissions = mode.Length == 0 ? null : System.Text.RegularExpressions.Regex.IsMatch(mode, "^[0-7]{3,4}$") ? Convert.ToInt16(mode, 8) : throw new ArgumentException("Permessi non validi.");
+            var mode = S(payload, "permissions"); short? permissions = mode.Length == 0 ? null : SftpPermissions.Parse(mode);
             int? TimeOption(string name){if(!payload.TryGetProperty(name,out var v)||v.ValueKind==JsonValueKind.Null||v.ValueKind==JsonValueKind.String&&v.GetString()=="")return null;return v.GetInt32();}
             var windowStart=TimeOption("windowStartMinute");var windowEnd=TimeOption("windowEndMinute");TransferWindow.Validate(windowStart,windowEnd);
             var bandwidth = I(payload, "bandwidthKiB", 0); if (bandwidth is < 0 or > 1048576) throw new ArgumentException("Limite banda non valido.");
@@ -106,7 +107,8 @@ public partial class MainWindow
         if (requests.GroupBy(j => j.Request.Upload ? j.Request.Remote : j.Request.Local, requests[0].Request.Upload ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase).Any(g => g.Count() > 1)) throw new IOException("Destinazione duplicata nella selezione.");
         foreach (var job in requests)
             if (fileJobs.Values.Any(j => j.Status is not ("Completato" or "Saltato") && (job.Request.Upload && j.Request.Upload && j.SessionId == job.SessionId && j.Request.Remote == job.Request.Remote || !job.Request.Upload && !j.Request.Upload && j.Request.Local.Equals(job.Request.Local, StringComparison.OrdinalIgnoreCase)))) throw new IOException("La destinazione è già presente nella coda.");
-        foreach (var job in requests) { fileJobs.Add(job.Id, job); job.Running = RunJob(job, false); }
+        var generation=authenticationGeneration;var productionApproved=requests[0].Request.Upload&&ConfirmProductionOperation(session.Profile,"Caricamento di file",requests.Length,string.Join("\n",requests.Take(10).Select(job=>job.Request.Remote)));RequireOperationSession(generation);
+        foreach (var job in requests) {job.ProductionApproved=productionApproved; fileJobs.Add(job.Id, job); job.Running = RunJob(job, false); }
         return QueueSnapshot();
     }
     static void CheckJobEndpoint(FileJob job, SshSession session)
@@ -121,12 +123,12 @@ public partial class MainWindow
     }
     async Task<object> PlanFiles(JsonElement payload)
     {
-        var session = Session(payload); var upload = S(payload, "direction") == "upload";
+        var generation=authenticationGeneration;RequireOperationSession(generation);var session = Session(payload); var upload = S(payload, "direction") == "upload";
         var localBase = Path.GetFullPath(S(payload, "localDirectory")); var remoteBase = S(payload, "remoteDirectory");
         var planned = new List<object>(); var skipped = 0;
         string LocalChild(string parent, string name)
         {
-            if (name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Contains('/') || name.Contains('\\') || name.EndsWith('.') || name.EndsWith(' ')) throw new IOException("Nome remoto non compatibile con Windows: " + name);
+            if (WindowsFileNames.IsReserved(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Contains('/') || name.Contains('\\') || name.EndsWith('.') || name.EndsWith(' ')) throw new IOException("Nome remoto non compatibile con Windows: " + name);
             return Path.Combine(parent, name);
         }
         async Task Walk(string local, string remote, bool directory, bool link, int depth)
@@ -172,7 +174,12 @@ public partial class MainWindow
                 await Walk(LocalChild(localBase, S(file, "name")), path, file.GetProperty("directory").GetBoolean(), file.TryGetProperty("link", out var symbolic) && symbolic.GetBoolean(), 0);
             }
         }
-        return new { items = planned, skippedLinks = skipped };
+        var planJson=JsonSerializer.SerializeToElement(planned,ProfileStore.Json);long required=0;var conflicts=0;foreach(var item in planJson.EnumerateArray()){if(item.GetProperty("target").ValueKind!=JsonValueKind.Null)conflicts++;if(!item.GetProperty("directory").GetBoolean()&&item.GetProperty("source").ValueKind!=JsonValueKind.Null){try{var sourceBytes=item.GetProperty("source").GetProperty("size").GetInt64();if(sourceBytes<0)throw new IOException("Dimensione del trasferimento non valida.");required=checked(required+sourceBytes);}catch(OverflowException){throw new IOException("Dimensione del trasferimento non valida.");}}}
+        long? available=null;RequireOperationSession(generation);
+        if(upload){using var spaceStop=CancellationTokenSource.CreateLinkedTokenSource(accountOperationStop.Token);spaceStop.CancelAfter(TimeSpan.FromSeconds(10));try{available=(await session.ServerInfoAsync(remoteBase,spaceStop.Token)).AvailableBytes;}catch(Exception error)when(error is IOException or Renci.SshNet.Common.SshException or OperationCanceledException){accountOperationStop.Token.ThrowIfCancellationRequested();}}
+        else{try{available=new DriveInfo(Path.GetPathRoot(localBase)!).AvailableFreeSpace;}catch(Exception error)when(error is IOException or ArgumentException or UnauthorizedAccessException){}}
+        RequireOperationSession(generation);if(available.HasValue&&available.Value<required)throw new IOException("Spazio disponibile insufficiente per preparare i file. Nessun trasferimento è stato avviato.");
+        return new { items = planned, skippedLinks = skipped,preflight=new{requiredBytes=required,availableBytes=available,existingDestinations=conflicts,checkedAt=DateTimeOffset.UtcNow} };
     }
     object LocalFiles(string path)
     {
@@ -189,8 +196,10 @@ public partial class MainWindow
         public FileSystemWatcher? Watcher { get; set; }
         public bool Busy { get; set; }
         public bool AutoUpload { get; set; }
+        public bool MeteredPaused {get;set;}
         public bool ExternalOnly { get; set; }
         public string? NativeSnapshot { get; init; }
+        public BridgeOrigin? Origin {get;init;}
         public bool Dirty { get; set; }
         public bool AutoScheduled { get; set; }
         public int ExternalRevision { get; set; }
@@ -207,6 +216,7 @@ public partial class MainWindow
     }
     async Task SaveRemoteEditor(EditBuffer edit, string text, bool external)
     {
+        var generation=authenticationGeneration;RequireOperationSession(generation);var operationToken=accountOperationStop.Token;
         if(sessions.TryGetValue(edit.SessionId,out var editorSession)&&recoveryTasks.ContainsKey(editorSession.Profile.Id))throw new IOException("Ripristino SFTP in corso. Le modifiche dell’editor sono conservate.");
         if (edit.Busy) throw new IOException("Salvataggio già in corso."); edit.Busy = true;
         var scratch = ""; var revision = edit.ExternalRevision;
@@ -217,9 +227,10 @@ public partial class MainWindow
             var bom = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }); var content = new UTF8Encoding(false, true).GetString(bytes, bom ? 3 : 0, bytes.Length - (bom ? 3 : 0));
             var dir = Path.Combine(dataPath, "Editor"); Directory.CreateDirectory(dir); scratch = Path.Combine(dir, edit.Id + ".upload"); await File.WriteAllBytesAsync(scratch, bytes);
             if (!sessions.TryGetValue(edit.SessionId, out var session)) throw new IOException("La sessione SFTP è stata chiusa.");
-            if(edit.NativeSnapshot!=null&&edit.NativeSnapshot!=NativeRecovery.Snapshot(session.Profile))throw new IOException("Il profilo OpenSSH è cambiato: salvataggio rifiutato. Le modifiche locali sono conservate.");
+            RequireOperationSession(generation);if(edit.NativeSnapshot!=null&&edit.NativeSnapshot!=NativeRecovery.Snapshot(session.Profile))throw new IOException("Il profilo OpenSSH è cambiato: salvataggio rifiutato. Le modifiche locali sono conservate.");
+            ConfirmProductionOperation(session.Profile,"Salvataggio del file remoto",resource:edit.Original.Path);RequireOperationSession(generation);
             var transfer = new TransferRequest(Guid.NewGuid().ToString("N"), scratch, edit.Original.Path, true, "replace", ExpectedHash: edit.Original.Hash);
-            try { await session.TransferAdvancedAsync(transfer, (_, _) => { }, CancellationToken.None); }
+            try { await session.TransferAdvancedAsync(transfer, (_, _) => { }, operationToken);RequireOperationSession(generation); }
             catch { try { await session.DiscardPartialAsync(transfer); } catch { } throw; }
             edit.Original = new(edit.Original.Path, content, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), bom);
             if (external && revision == edit.ExternalRevision) edit.Dirty = false;
@@ -254,17 +265,18 @@ public partial class MainWindow
     }
     void ScheduleExternalSave(EditBuffer edit)
     {
-        if (CriticalUpdateRequired || !edit.AutoUpload || edit.AutoScheduled || !editBuffers.ContainsKey(edit.Id)) return;
+        if (OperationsLocked || !edit.AutoUpload || edit.AutoScheduled || !editBuffers.ContainsKey(edit.Id)) return;
+        if(data.Settings.MeteredConnection){if(!edit.MeteredPaused){edit.MeteredPaused=true;Emit("editorAutoPaused",new{edit.Id});}return;}
         edit.AutoScheduled = true;
         _ = Run();
         async Task Run()
         {
             try
             {
-                while (edit.AutoUpload && editBuffers.ContainsKey(edit.Id))
+                while (!OperationsLocked && edit.AutoUpload && editBuffers.ContainsKey(edit.Id))
                 {
                     var revision = edit.ExternalRevision; await Task.Delay(700);
-                    if (!edit.AutoUpload || !editBuffers.ContainsKey(edit.Id)) return;
+                    if (OperationsLocked || data.Settings.MeteredConnection || !edit.AutoUpload || !editBuffers.ContainsKey(edit.Id)) return;
                     if (revision != edit.ExternalRevision || edit.Busy) continue;
                     try { await SaveRemoteEditor(edit, "", true); }
                     catch (Exception ex) { edit.AutoUpload = false; Emit("editorConflict", new { edit.Id, error = ex.Message }); return; }
@@ -310,6 +322,7 @@ public partial class MainWindow
     {
         switch (action)
         {
+            case "fileBridgeCancel": case "fileBridgeTargets": case "fileBridgePlan": case "fileBridgeEnqueue": return await BridgeAction(action,p);
             case "folderCompare": return await CompareFolders(p);
             case "folderSync": return await EnqueueFolderPlan(p);
             case "folderCancel": if (folderScans.TryGetValue(S(p, "scanId"), out var scan)) scan.Cancel(); return null;
@@ -318,6 +331,8 @@ public partial class MainWindow
                 data.FileLocations[locationSession.Profile.Id] = new(locationSession.Profile.Host, locationSession.Profile.Port, locationSession.Profile.Username, S(p, "local"), S(p, "remote")); store.Save(data); return null;
             case "localList": return await Task.Run(() => LocalFiles(S(p, "path")));
             case "localChoose": var folder = new OpenFolderDialog { Title = "Scegli cartella locale" }; return folder.ShowDialog(this) == true ? await Task.Run(() => LocalFiles(folder.FolderName)) : null;
+            case "remoteLog":
+                var logGeneration=authenticationGeneration;RequireOperationSession(logGeneration);var logSession=Session(p);if(data.Settings.MeteredConnection&&p.TryGetProperty("automatic",out var automaticLog)&&automaticLog.GetBoolean())return new{paused=true};var logChunk=await logSession.ReadLogAsync(S(p,"path"),p.TryGetProperty("offset",out var logOffset)&&logOffset.ValueKind==JsonValueKind.Number?logOffset.GetInt64():null,S(p,"prefixHash"),accountOperationStop.Token);RequireOperationSession(logGeneration);return logChunk;
             case "sftpDirectory": return await Session(p).CanonicalDirectoryAsync(S(p, "path", "."));
             case "sftpHome": return Session(p).HomeDirectory;
             case "fileCompare":
@@ -326,8 +341,9 @@ public partial class MainWindow
                 return new { local = localText, remote = remoteText };
             case "sftpOperation":
                 if (QueueBusy || EditorsBusy) throw new IOException("Completa o metti in pausa i trasferimenti prima di modificare i file.");
+                var fileGeneration=authenticationGeneration;var changingSession=Session(p);ConfirmProductionOperation(changingSession.Profile,"Modifica dei file remoti",resource:S(p,"path"));
                 if (S(p, "operation") == "delete" && !Confirm("Eliminare «" + S(p, "path") + "» dal server? Le cartelle devono essere vuote.")) return null;
-                await Session(p).FileOperationAsync(S(p, "operation"), S(p, "path"), S(p, "value")); return null;
+                RequireOperationSession(fileGeneration);await changingSession.FileOperationAsync(S(p, "operation"), S(p, "path"), S(p, "value"),accountOperationStop.Token,()=>RequireOperationSession(fileGeneration)); return null;
             case "fileEnqueue": return EnqueueFiles(p);
             case "filePlan": return await PlanFiles(p);
             case "fileParallelism": if (QueueBusy) throw new IOException("Metti in pausa la coda prima di cambiare il parallelismo."); var limit = I(p, "value", 2); if (limit is < 1 or > 4) throw new ArgumentException("Parallelismo: da 1 a 4."); transferSlots.Dispose(); transferSlots = new(limit, limit); transferParallelism = limit; return limit;

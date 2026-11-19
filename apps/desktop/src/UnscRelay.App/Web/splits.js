@@ -1,28 +1,181 @@
- 'use strict';
-let splitPaneIds=[],splitRatios=[.5,.5],splitZoom=false,splitControlSignature='',lastSplitActive=null;
-function splitSlotCount(){return layout==='grid'?4:layout==='tabs'?1:2}
-function setSplitLayout(value){layout=value;splitZoom=false;splitPaneIds=[...panes.values()].filter(p=>!p.detachedWindow).map(p=>p.id).slice(0,splitSlotCount());if(activeId&&!splitPaneIds.includes(activeId)&&panes.has(activeId)&&!panes.get(activeId).detachedWindow)splitPaneIds[0]=activeId;lastSplitActive=activeId;refreshStage()}
-function assignSplitSlot(index,id){const previous=splitPaneIds[index],other=splitPaneIds.indexOf(id);if(id&&other>=0&&other!==index)splitPaneIds[other]=previous;splitPaneIds[index]=id||null;if(id)activeId=id;lastSplitActive=activeId;splitZoom=false;refreshStage()}
-let splitFitPending=false;
-function fitSplitPanes(){if(splitFitPending)return;splitFitPending=true;requestAnimationFrame(()=>{splitFitPending=false;for(const pane of panes.values())if(!pane.detachedWindow&&pane.container.style.display!=='none')try{const surface=pane.container.querySelector('.terminal-surface');if(surface&&surface.clientWidth>0&&surface.clientHeight>0){const size=surface.clientWidth+':'+surface.clientHeight;pane.fit.fit();if(pane.renderSize!==size||!pane.wasRenderedVisible)pane.term.refresh(0,pane.term.rows-1);pane.renderSize=size;pane.wasRenderedVisible=true}}catch{}scheduleDesktopLayout()})}
-
-function applySplitTracks(){const stage=$('terminals'),twoX=layout==='columns'||layout==='grid',twoY=layout==='rows'||layout==='grid';stage.style.gridTemplateColumns=twoX&&!splitZoom?`minmax(0,${splitRatios[0]}fr) 8px minmax(0,${1-splitRatios[0]}fr)`:'minmax(0,1fr)';stage.style.gridTemplateRows=twoY&&!splitZoom?`minmax(0,${splitRatios[1]}fr) 8px minmax(0,${1-splitRatios[1]}fr)`:'minmax(0,1fr)';fitSplitPanes()}
-function makeSplitDivider(axis){const d=document.createElement('div');d.className='split-divider '+(axis===0?'split-x':'split-y');d.tabIndex=0;d.setAttribute('role','separator');d.setAttribute('aria-label',axis===0?'Larghezza riquadri':'Altezza riquadri');d.setAttribute('aria-orientation',axis===0?'vertical':'horizontal');d.setAttribute('aria-valuemin','10');d.setAttribute('aria-valuemax','90');const update=()=>{d.setAttribute('aria-valuenow',Math.round(splitRatios[axis]*100));applySplitTracks()};update();d.ondblclick=()=>{splitRatios[axis]=.5;update()};d.onkeydown=e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home'].includes(e.key)){e.preventDefault();splitRatios[axis]=e.key==='Home'?.5:Math.max(.1,Math.min(.9,splitRatios[axis]+(['ArrowLeft','ArrowUp'].includes(e.key)?-.02:.02)));update()}};d.onpointerdown=e=>{e.preventDefault();d.setPointerCapture(e.pointerId)};d.onpointermove=e=>{if(!d.hasPointerCapture(e.pointerId))return;const r=$('terminals').getBoundingClientRect();splitRatios[axis]=Math.max(.1,Math.min(.9,axis===0?(e.clientX-r.left)/r.width:(e.clientY-r.top)/r.height));update()};d.onpointerup=e=>{if(d.hasPointerCapture(e.pointerId))d.releasePointerCapture(e.pointerId)};return d}
-function renderSplitStage(){
- const stage=$('terminals'),controls=$('split-controls'),local=[...panes.values()].filter(p=>!p.detachedWindow),count=splitSlotCount();
- splitPaneIds=splitPaneIds.slice(0,count).map(id=>local.some(p=>p.id===id)?id:null);while(splitPaneIds.length<count)splitPaneIds.push(null);
- if(layout!=='tabs'){
-  if(activeId&&local.some(p=>p.id===activeId)&&!splitPaneIds.includes(activeId)&&activeId!==lastSplitActive){const slot=splitPaneIds.indexOf(null),focused=splitPaneIds.indexOf(lastSplitActive);splitPaneIds[slot>=0?slot:focused>=0?focused:0]=activeId}
-  if(splitPaneIds.every(id=>!id))for(let i=0;i<count;i++)splitPaneIds[i]=local[i]?.id||null;
- }
- lastSplitActive=activeId;const visible=activeId===null?[]:layout==='tabs'||splitZoom?[activeId]:splitPaneIds.filter(Boolean);const has=visible.some(id=>local.some(p=>p.id===id));
- stage.classList.toggle('has-sessions',has);stage.classList.toggle('split-stage',has&&layout!=='tabs');$('welcome').hidden=has;$('welcome').style.display=has?'none':'';controls.hidden=!has||layout==='tabs';
- const signature=JSON.stringify([layout,splitPaneIds,local.map(p=>[p.id,p.title.textContent]),splitZoom]);if(signature!==splitControlSignature){splitControlSignature=signature;controls.replaceChildren();if(layout!=='tabs')for(let i=0;i<count;i++){const label=document.createElement('label');label.textContent=(i+1)+' ';const select=document.createElement('select');select.setAttribute('aria-label','Scheda riquadro '+(i+1));const empty=new Option('Riquadro vuoto','');select.append(empty);for(const p of local)select.append(new Option(p.title.textContent+' · '+([...panes.keys()].indexOf(p.id)+1),p.id));select.value=splitPaneIds[i]||'';select.onchange=()=>assignSplitSlot(i,select.value);label.append(select);label.ondragover=e=>{if([...e.dataTransfer.types].includes('application/x-unsc-session'))e.preventDefault()};label.ondrop=e=>{e.preventDefault();const id=e.dataTransfer.getData('application/x-unsc-session');if(local.some(p=>p.id===id))assignSplitSlot(i,id)};controls.append(label)}}
- for(const e of stage.querySelectorAll('.split-divider,.split-empty'))e.remove();
- function position(el,index){el.style.gridColumn=layout==='columns'||layout==='grid'?String((index%2)*2+1):'1';el.style.gridRow=layout==='rows'?String(index*2+1):layout==='grid'?String(Math.floor(index/2)*2+1):'1'}
- for(const[id,p]of panes){p.tab.classList.toggle('active',id===activeId);p.container.classList.toggle('focused',id===activeId);if(p.detachedWindow){p.container.style.display='flex';continue}if(!visible.includes(id))p.wasRenderedVisible=false;p.container.style.display=visible.includes(id)?'flex':'none';p.container.style.gridColumn='1';p.container.style.gridRow='1';if(layout!=='tabs'&&!splitZoom)position(p.container,splitPaneIds.indexOf(id))}
- if(has&&layout!=='tabs'&&!splitZoom){for(let i=0;i<count;i++)if(!splitPaneIds[i]){const empty=document.createElement('div');empty.className='split-empty';empty.textContent='Riquadro '+(i+1)+' · scegli una scheda in alto';position(empty,i);stage.append(empty)}if(layout==='columns'||layout==='grid')stage.append(makeSplitDivider(0));if(layout==='rows'||layout==='grid')stage.append(makeSplitDivider(1))}
- for(const [id,value] of [['split-h','columns'],['split-v','rows'],['split-grid','grid'],['split-single','tabs']])$(id).setAttribute('aria-pressed',String(layout===value));$('split-zoom').disabled=!has||layout==='tabs';$('split-zoom').setAttribute('aria-pressed',String(splitZoom));$('split-zoom').title=splitZoom?'Ripristina riquadri':'Ingrandisci riquadro attivo';
- $('connection-status').textContent=panes.size?panes.size+' session'+(panes.size===1?'e':'i')+' aperte':'Nessuna sessione attiva';applySplitTracks();
+"use strict";
+let splitPaneIds = [], splitRatios = [0.5, 0.5], splitZoom = false, splitControlSignature = "", lastSplitActive = null;
+function splitSlotCount() {
+  return layout === "grid" ? 4 : layout === "tabs" ? 1 : 2;
 }
-$('split-grid').onclick=()=>setSplitLayout('grid');$('split-single').onclick=()=>setSplitLayout('tabs');$('split-zoom').onclick=()=>{splitZoom=!splitZoom;refreshStage()};
+function setSplitLayout(value) {
+  layout = value;
+  splitZoom = false;
+  splitPaneIds = [...panes.values()].filter((p) => !p.detachedWindow).map((p) => p.id).slice(0, splitSlotCount());
+  if (activeId && !splitPaneIds.includes(activeId) && panes.has(activeId) && !panes.get(activeId).detachedWindow) splitPaneIds[0] = activeId;
+  lastSplitActive = activeId;
+  refreshStage();
+}
+function assignSplitSlot(index, id) {
+  const previous = splitPaneIds[index], other = splitPaneIds.indexOf(id);
+  if (id && other >= 0 && other !== index) splitPaneIds[other] = previous;
+  splitPaneIds[index] = id || null;
+  if (id) activeId = id;
+  lastSplitActive = activeId;
+  splitZoom = false;
+  refreshStage();
+}
+let splitFitPending = false;
+function fitSplitPanes() {
+  if (splitFitPending) return;
+  splitFitPending = true;
+  requestAnimationFrame(() => {
+    splitFitPending = false;
+    for (const pane of panes.values()) if (!pane.detachedWindow && pane.container.style.display !== "none") try {
+      const surface = pane.container.querySelector(".terminal-surface");
+      if (surface && surface.clientWidth > 0 && surface.clientHeight > 0) {
+        const size = surface.clientWidth + ":" + surface.clientHeight;
+        pane.fit.fit();
+        if (pane.renderSize !== size || !pane.wasRenderedVisible) pane.term.refresh(0, pane.term.rows - 1);
+        pane.renderSize = size;
+        pane.wasRenderedVisible = true;
+      }
+    } catch {
+    }
+    scheduleDesktopLayout();
+  });
+}
+function applySplitTracks() {
+  const stage = $("terminals"), twoX = layout === "columns" || layout === "grid", twoY = layout === "rows" || layout === "grid";
+  stage.style.gridTemplateColumns = twoX && !splitZoom ? `minmax(0,${splitRatios[0]}fr) 8px minmax(0,${1 - splitRatios[0]}fr)` : "minmax(0,1fr)";
+  stage.style.gridTemplateRows = twoY && !splitZoom ? `minmax(0,${splitRatios[1]}fr) 8px minmax(0,${1 - splitRatios[1]}fr)` : "minmax(0,1fr)";
+  fitSplitPanes();
+}
+function makeSplitDivider(axis) {
+  const d = document.createElement("div");
+  d.className = "split-divider " + (axis === 0 ? "split-x" : "split-y");
+  d.tabIndex = 0;
+  d.setAttribute("role", "separator");
+  d.setAttribute("aria-label", axis === 0 ? "Larghezza riquadri" : "Altezza riquadri");
+  d.setAttribute("aria-orientation", axis === 0 ? "vertical" : "horizontal");
+  d.setAttribute("aria-valuemin", "10");
+  d.setAttribute("aria-valuemax", "90");
+  const update = () => {
+    d.setAttribute("aria-valuenow", Math.round(splitRatios[axis] * 100));
+    applySplitTracks();
+  };
+  update();
+  d.ondblclick = () => {
+    splitRatios[axis] = 0.5;
+    update();
+  };
+  d.onkeydown = (e) => {
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home"].includes(e.key)) {
+      e.preventDefault();
+      splitRatios[axis] = e.key === "Home" ? 0.5 : Math.max(0.1, Math.min(0.9, splitRatios[axis] + (["ArrowLeft", "ArrowUp"].includes(e.key) ? -0.02 : 0.02)));
+      update();
+    }
+  };
+  d.onpointerdown = (e) => {
+    e.preventDefault();
+    d.setPointerCapture(e.pointerId);
+  };
+  d.onpointermove = (e) => {
+    if (!d.hasPointerCapture(e.pointerId)) return;
+    const r = $("terminals").getBoundingClientRect();
+    splitRatios[axis] = Math.max(0.1, Math.min(0.9, axis === 0 ? (e.clientX - r.left) / r.width : (e.clientY - r.top) / r.height));
+    update();
+  };
+  d.onpointerup = (e) => {
+    if (d.hasPointerCapture(e.pointerId)) d.releasePointerCapture(e.pointerId);
+  };
+  return d;
+}
+function renderSplitStage() {
+  const stage = $("terminals"), controls = $("split-controls"), local = [...panes.values()].filter((p) => !p.detachedWindow), count = splitSlotCount();
+  splitPaneIds = splitPaneIds.slice(0, count).map((id) => local.some((p) => p.id === id) ? id : null);
+  while (splitPaneIds.length < count) splitPaneIds.push(null);
+  if (layout !== "tabs") {
+    if (activeId && local.some((p) => p.id === activeId) && !splitPaneIds.includes(activeId) && activeId !== lastSplitActive) {
+      const slot = splitPaneIds.indexOf(null), focused = splitPaneIds.indexOf(lastSplitActive);
+      splitPaneIds[slot >= 0 ? slot : focused >= 0 ? focused : 0] = activeId;
+    }
+    if (splitPaneIds.every((id) => !id)) for (let i = 0; i < count; i++) splitPaneIds[i] = local[i]?.id || null;
+  }
+  lastSplitActive = activeId;
+  const visible = activeId === null ? [] : layout === "tabs" || splitZoom ? [activeId] : splitPaneIds.filter(Boolean);
+  const has = visible.some((id) => local.some((p) => p.id === id));
+  stage.classList.toggle("has-sessions", has);
+  stage.classList.toggle("split-stage", has && layout !== "tabs");
+  $("welcome").hidden = has;
+  $("welcome").style.display = has ? "none" : "";
+  controls.hidden = !has || layout === "tabs";
+  const signature = JSON.stringify([layout, splitPaneIds, local.map((p) => [p.id, p.title.textContent]), splitZoom]);
+  if (signature !== splitControlSignature) {
+    splitControlSignature = signature;
+    controls.replaceChildren();
+    if (layout !== "tabs") for (let i = 0; i < count; i++) {
+      const label = document.createElement("label");
+      label.textContent = i + 1 + " ";
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", uiText("Scheda riquadro ") + (i + 1));
+      const empty = new Option("Riquadro vuoto", "");
+      select.append(empty);
+      for (const p of local) select.append(new Option(p.title.textContent + " · " + ([...panes.keys()].indexOf(p.id) + 1), p.id));
+      select.value = splitPaneIds[i] || "";
+      select.onchange = () => assignSplitSlot(i, select.value);
+      label.append(select);
+      label.ondragover = (e) => {
+        if ([...e.dataTransfer.types].includes("application/x-unsc-session")) e.preventDefault();
+      };
+      label.ondrop = (e) => {
+        e.preventDefault();
+        const id = e.dataTransfer.getData("application/x-unsc-session");
+        if (local.some((p) => p.id === id)) assignSplitSlot(i, id);
+      };
+      controls.append(label);
+    }
+  }
+  for (const e of stage.querySelectorAll(".split-divider,.split-empty")) e.remove();
+  function position(el, index) {
+    el.style.gridColumn = layout === "columns" || layout === "grid" ? String(index % 2 * 2 + 1) : "1";
+    el.style.gridRow = layout === "rows" ? String(index * 2 + 1) : layout === "grid" ? String(Math.floor(index / 2) * 2 + 1) : "1";
+  }
+  for (const [id, p] of panes) {
+    p.tab.classList.toggle("active", id === activeId);
+    p.container.classList.toggle("focused", id === activeId);
+    if (p.detachedWindow) {
+      p.container.style.display = "flex";
+      continue;
+    }
+    if (!visible.includes(id)) p.wasRenderedVisible = false;
+    p.container.style.display = visible.includes(id) ? "flex" : "none";
+    if (visible.includes(id)) p.outputBatch?.flush();
+    p.container.style.gridColumn = "1";
+    p.container.style.gridRow = "1";
+    if (layout !== "tabs" && !splitZoom) position(p.container, splitPaneIds.indexOf(id));
+  }
+  if (has && layout !== "tabs" && !splitZoom) {
+    for (let i = 0; i < count; i++) if (!splitPaneIds[i]) {
+      const empty = document.createElement("div");
+      empty.className = "split-empty";
+      empty.textContent = uiText("Riquadro ") + (i + 1) + " · scegli una scheda in alto";
+      position(empty, i);
+      stage.append(empty);
+    }
+    if (layout === "columns" || layout === "grid") stage.append(makeSplitDivider(0));
+    if (layout === "rows" || layout === "grid") stage.append(makeSplitDivider(1));
+  }
+  for (const [id, value] of [["split-h", "columns"], ["split-v", "rows"], ["split-grid", "grid"], ["split-single", "tabs"]]) $(id).setAttribute("aria-pressed", String(layout === value));
+  $("split-zoom").disabled = !has || layout === "tabs";
+  $("split-zoom").setAttribute("aria-pressed", String(splitZoom));
+  $("split-zoom").title = splitZoom ? "Ripristina riquadri" : "Ingrandisci riquadro attivo";
+  const sessionStatus = $("connection-status");
+  sessionStatus.replaceChildren();
+  if (panes.size) {
+    sessionStatus.append(document.createTextNode(panes.size + " "), interfaceLabel(document.createElement("span"), panes.size === 1 ? "sessione aperta" : "sessioni aperte"));
+  } else interfaceLabel(sessionStatus, "Nessuna sessione attiva");
+  if (panes.size) delete sessionStatus.dataset.interfaceKey;
+  applySplitTracks();
+}
+$("split-grid").onclick = () => setSplitLayout("grid");
+$("split-single").onclick = () => setSplitLayout("tabs");
+$("split-zoom").onclick = () => {
+  splitZoom = !splitZoom;
+  refreshStage();
+};

@@ -50,6 +50,7 @@ public partial class MainWindow
  async Task<object?> ArchiveAction(string action,JsonElement p)
  {
   var generation=authenticationGeneration;RequireArchiveSession(generation);
+  if(action=="archiveRequestAccess"){await cloud.RequestArchiveAccess(p.GetProperty("archiveId").GetGuid(),cloudLifetime.Token);RequireArchiveSession(generation);return true;}
   if(action=="archiveLocalList")return vault.RememberedArchives(cloud.State.Owner).Where(a=>LocalArchiveCopies.Read(a)!=null).Select(a=>a with{Offline=true}).ToList();
   if(action=="archiveList")
   {
@@ -63,7 +64,7 @@ public partial class MainWindow
    var archive=await cloud.CreateArchive(S(p,"name"),cloudLifetime.Token);var key=RandomNumberGenerator.GetBytes(32);byte[]? bytes=null;
    try
    {
-    using var records=JsonDocument.Parse("[]");bytes=JsonSerializer.SerializeToUtf8Bytes(new PortableSnapshot(1,records.RootElement,new AppData(),[]),VaultSyncCrypto.Json);
+    using var records=JsonDocument.Parse("[]");bytes=JsonSerializer.SerializeToUtf8Bytes(new PortableSnapshot(2,records.RootElement,new AppData(),[]),VaultSyncCrypto.Json);
     var envelope=VaultSyncCrypto.Create(archive.ArchiveOwner,recovery,key,bytes);using var device=vault.SharingDevice(cloud.State.Owner,false);
     await cloud.GrantArchiveKey(archive.Id,ArchiveKeyCrypto.Wrap(archive.Id,archive.ArchiveOwner,cloud.State.Owner,device.Id,device.PublicKey,key),cloudLifetime.Token);
     var created=await cloud.WriteArchive(archive,envelope,0,cloudLifetime.Token);if(created==null)throw new InvalidOperationException("Archivio modificato durante la creazione. La copia cifrata sul server non è stata sovrascritta.");CacheArchive(archive,new(created.Value,DateTime.UtcNow,envelope),key);return archive;
@@ -71,14 +72,31 @@ public partial class MainWindow
   }
   var id=p.GetProperty("archiveId").GetGuid();SharedArchive selected;var offline=false;
   try{if(p.TryGetProperty("localOnly",out var localOnly)&&localOnly.GetBoolean()){selected=vault.RememberedArchives(cloud.State.Owner).SingleOrDefault(a=>a.Id==id)??throw new InvalidOperationException("Nessuna copia locale per questo archivio.");offline=true;}else selected=await FindArchive(id);}catch(Exception ex)when(ArchiveOffline(ex)){selected=vault.RememberedArchives(cloud.State.Owner).SingleOrDefault(a=>a.Id==id)??throw new InvalidOperationException("Questo archivio non è disponibile nella copia locale.");offline=true;}
-  if(offline&&action is not("archiveRead" or "archiveCopySecret" or "archiveUpdateRecord" or "archiveAddPassword" or "archiveDeleteRecord" or "archiveExport"))throw new InvalidOperationException("La gestione degli accessi richiede una connessione. La copia locale resta disponibile.");
+  if(offline&&action is not("archiveRead" or "archiveCopySecret" or "archiveUpdateRecord" or "archiveAddPassword" or "archiveDeleteRecord" or "archiveCommentAdd" or "archiveExport"))throw new InvalidOperationException("La gestione degli accessi richiede una connessione. La copia locale resta disponibile.");
+  if(action is "archiveAccessRequests" or "archiveRequestApprove" or "archiveRequestDismiss"){
+   if(selected.Access!="owner")throw new InvalidOperationException("Solo il titolare può gestire le richieste.");var requests=await cloud.ArchiveAccessRequests(id,cloudLifetime.Token);RequireArchiveSession(generation);if(action=="archiveAccessRequests")return requests;
+   var requestId=p.GetProperty("requestId").GetGuid();var request=requests.EnumerateArray().SingleOrDefault(row=>row.GetProperty("id").GetGuid()==requestId);if(request.ValueKind==JsonValueKind.Undefined)throw new InvalidOperationException("La richiesta non è più disponibile.");
+   var email=request.GetProperty("email").GetString()!;var access=S(p,"access");var expires=p.TryGetProperty("expiresAt",out var expiry)&&expiry.ValueKind==JsonValueKind.String?expiry.GetDateTimeOffset():(DateTimeOffset?)null;var review=NativeText(action=="archiveRequestApprove"?"Approva richiesta":"Rifiuta richiesta")+"\n\n"+selected.Name+"\n"+email+(action=="archiveRequestApprove"?"\n"+NativeText(access=="write"?"Lettura e scrittura":"Sola lettura")+"\n"+(expires?.ToLocalTime().ToString("f")??NativeText("Senza scadenza")):"");if(!Confirm(review))return new{cancelled=true};RequireArchiveSession(generation);
+   if(action=="archiveRequestDismiss"){await cloud.DismissArchiveAccessRequest(id,requestId,cloudLifetime.Token);RequireArchiveSession(generation);return new{cancelled=false};}
+   var recipient=await cloud.ApproveArchiveAccessRequest(id,requestId,access,expires,cloudLifetime.Token);RequireArchiveSession(generation);try{await AuthorizeArchiveDevices(selected,recipient.GetProperty("account").GetString()!);return new{ready=true,cancelled=false};}catch(InvalidOperationException){return new{ready=false,cancelled=false};}
+  }
+  if(action=="archiveStorageUsage"){var result=await cloud.ArchiveStorageUsage(id,cloudLifetime.Token);RequireArchiveSession(generation);return result;}
+  if(action=="archiveActivity")return await cloud.ArchiveActivity(id,p.GetProperty("page").GetInt32(),cloudLifetime.Token);
+  if(action=="archivePermissionsReport"){var members=await cloud.ArchiveMembers(id,cloudLifetime.Token);RequireArchiveSession(generation);var pdf=S(p,"format")=="pdf";byte[] bytes;if(pdf){var report=new PermissionReportWindow(this,NativeText("Riepilogo dei permessi"));report.Show();try{bytes=await report.Render(dataPath,ArchivePermissionReport.Html(selected,members,nativeLanguage,NativeText));}finally{report.Close();}}else bytes=Encoding.UTF8.GetBytes(ArchivePermissionReport.Create(selected,members));try{RequireArchiveSession(generation);var destination=SaveFile("Salva riepilogo permessi","relay-permissions-"+id.ToString("D")+(pdf?".pdf":".csv"));if(destination==null)return false;RequireArchiveSession(generation);PrivateKeyExport.Write(destination,bytes);return true;}finally{CryptographicOperations.ZeroMemory(bytes);}}
+  if(action=="archiveAccessReview"){var result=await cloud.ArchiveAccessReview(id,accountOperationStop.Token);RequireArchiveSession(generation);return result;}
+  if(action=="archiveAccessReviewed"){var result=await cloud.AcknowledgeArchiveReview(id,I(p,"intervalDays",30),S(p,"intent"),accountOperationStop.Token);RequireArchiveSession(generation);return result;}
+  if(action=="archiveSharingReview")return await cloud.ReviewArchiveSharing(id,p.GetProperty("suspended").GetBoolean(),cloudLifetime.Token);
+  if(action=="archiveSharingSet"){var review=await cloud.ReviewArchiveSharing(id,p.GetProperty("suspended").GetBoolean(),cloudLifetime.Token);if(review.Intent!=S(p,"intent"))throw new InvalidOperationException("Gli accessi sono cambiati. Aggiorna il riepilogo e ripeti la verifica.");await cloud.SetArchiveSharing(review,new InAppAccountBrowser(this,dataPath),()=>RequireArchiveSession(generation),cloudLifetime.Token);return true;}
+  if(action=="archiveIntegrityLast")return data.IntegrityObservations.SingleOrDefault(value=>value.ArchiveId==id);
   if(action=="archiveMembers")return await cloud.ArchiveMembers(id,cloudLifetime.Token);
   if(action=="archiveRename"){await cloud.RenameArchive(id,S(p,"name"),cloudLifetime.Token);return true;}
   if(action=="archiveRevoke"){await cloud.RemoveArchiveMember(id,S(p,"account"),cloudLifetime.Token);return true;}
   if(action=="archiveAuthorize"){await AuthorizeArchiveDevices(selected,S(p,"account"));return true;}
   if(action=="archiveShare")
   {
-   var recipient=await cloud.ShareArchive(id,S(p,"email"),S(p,"access"),cloudLifetime.Token);
+   var requestedExpiry=p.TryGetProperty("expiresAt",out var requested)&&requested.ValueKind==JsonValueKind.String?requested.GetDateTimeOffset():(DateTimeOffset?)null;
+   if(!Confirm(NativeText("Conferma invito")+"\n\n"+selected.Name+"\n"+S(p,"email")+"\n"+NativeText(S(p,"access")=="write"?"Lettura e scrittura":"Sola lettura")+"\n"+(requestedExpiry?.ToLocalTime().ToString("f")??NativeText("Senza scadenza"))))throw new OperationCanceledException();RequireArchiveSession(generation);
+   var recipient=await cloud.ShareArchive(id,S(p,"email"),S(p,"access"),cloudLifetime.Token,p.TryGetProperty("expiresAt",out var expiry)&&expiry.ValueKind==JsonValueKind.String?expiry.GetDateTimeOffset():null);
    var account=recipient.GetProperty("account").GetString()!;
    try{await AuthorizeArchiveDevices(selected,account);return new{ready=true,message="Archivio condiviso e dispositivi autorizzati."};}
    catch(InvalidOperationException ex){return new{ready=false,message="Accesso aggiunto. "+ex.Message};}
@@ -118,14 +136,16 @@ public partial class MainWindow
   byte[]? plain=null,changed=null;
   try
   {
-   RequireArchiveSession(generation);plain=VaultSyncCrypto.Open(remote.Envelope,selected.ArchiveOwner,dataKey);var snapshot=VaultSyncCrypto.Parse(plain);if(!offline)CacheArchive(selected,remote,dataKey);
+   RequireArchiveSession(generation);plain=VaultSyncCrypto.Open(remote.Envelope,selected.ArchiveOwner,dataKey);var snapshot=VaultSyncCrypto.Parse(plain);
+   if(action=="archiveIntegrity"){var report=SnapshotIntegrity.Inspect(snapshot);RequireArchiveSession(generation);var pending=cached?.Pending??false;var previousObservations=data.IntegrityObservations;data.IntegrityObservations=previousObservations.Where(value=>value.ArchiveId!=id).Append(new(id,remote.Revision,report.CheckedAt,offline,pending,report.WarningCount)).OrderByDescending(value=>value.CheckedAt).Take(1000).ToList();try{store.Save(data);}catch{data.IntegrityObservations=previousObservations;throw;}return new{archiveId=id,revision=remote.Revision,offline,pending,report};}
+   if(!offline)CacheArchive(selected,remote,dataKey);
    if(action=="archiveRead")return new{archive=selected,revision=remote.Revision,offline,pending=cached?.Pending??false,records=snapshot.Records.EnumerateArray().Select(r=>r.GetProperty("info").Clone()).ToArray(),profiles=snapshot.Data.Profiles.Select(profile=>new{profile.Name,profile.Protocol,profile.Host,profile.Port})};
    if(action=="archiveCopySecret")
    {
     var record=snapshot.Records.EnumerateArray().Single(r=>r.GetProperty("info").GetProperty("id").GetString()==S(p,"recordId"));var bytes=record.GetProperty("content").GetBytesFromBase64();
     try{RequireArchiveSession(generation);if(record.GetProperty("info").GetProperty("kind").GetString() is not("password" or "ssh-key" or "ssh-native-key"))throw new InvalidOperationException("Questo elemento non è un segreto copiabile.");Clipboard.SetText(Encoding.UTF8.GetString(bytes));return true;}finally{CryptographicOperations.ZeroMemory(bytes);}
    }
-   if(action is "archiveUpdateRecord" or "archiveAddPassword" or "archiveDeleteRecord")
+   if(action is "archiveUpdateRecord" or "archiveAddPassword" or "archiveDeleteRecord" or "archiveCommentAdd")
    {
     if(selected.Access=="read")throw new InvalidOperationException("L’archivio è in sola lettura.");if(p.GetProperty("revision").GetInt64()!=remote.Revision)throw new InvalidOperationException("L’archivio è cambiato. Aggiorna prima di modificare i dati.");
     var json=JsonNode.Parse(plain)!.AsObject();var records=json["records"]!.AsArray();
@@ -142,6 +162,7 @@ public partial class MainWindow
       var recordId=S(p,"recordId");if(snapshot.Data.Profiles.Any(profile=>profile.KeyId==recordId||profile.PasswordId==recordId))throw new InvalidOperationException("L’elemento è usato da una connessione: modifica prima la connessione dal desktop.");
       if(!Confirm("Eliminare questo elemento dall’archivio condiviso?"))return false;records.Remove(record);
      }
+     else if(action=="archiveCommentAdd"){var info=record["info"]!.Deserialize<KeyInfo>(VaultSyncCrypto.Json)??throw new ArgumentException("Commento non valido.");record["info"]!["discussion"]=JsonSerializer.SerializeToNode(ItemDiscussion.Append(info.Discussion,S(p,"author"),S(p,"text"),DateTimeOffset.UtcNow),VaultSyncCrypto.Json);}
      else{var name=S(p,"name").Trim();var comment=S(p,"comment");if(name.Length is <1 or >100||comment.Length>1000)throw new ArgumentException("Controlla nome e note.");record["info"]!["name"]=name;record["info"]!["comment"]=comment;}
     }
     changed=JsonSerializer.SerializeToUtf8Bytes(json,VaultSyncCrypto.Json);VaultSyncCrypto.Parse(changed);var sealedCopy=VaultSyncCrypto.Seal(remote.Envelope,dataKey,changed);

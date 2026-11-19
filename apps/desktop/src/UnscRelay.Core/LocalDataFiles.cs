@@ -23,8 +23,9 @@ public static class LocalDataFiles
     {
         var path = FolderSync.LocalChild(Root(directory), relative.Replace(Path.DirectorySeparatorChar, '/'));
         FolderSync.CheckLocalParents(path);
-        if (File.Exists(path) && File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))
-            throw new IOException("I dati locali non possono essere collegamenti.");
+        try { if(File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint))throw new IOException("I dati locali non possono essere collegamenti."); }
+        catch(FileNotFoundException) { /* A new ordinary child may not exist yet. */ }
+        catch(DirectoryNotFoundException) { /* Its checked parent will be created by the writer. */ }
         return path;
     }
     public static FileStream OpenRead(string directory, string relative, long maximumBytes)
@@ -36,21 +37,29 @@ public static class LocalDataFiles
             // Check the opened object as well as its name: a parent/file replaced between
             // validation and opening must not redirect the read. Windows denies replacement
             // of this handle while it is held because FileShare.Delete is not granted.
+            RequireOpenedPath(stream,path);
+            Child(directory, relative);
+            if (stream.Length > maximumBytes) throw new InvalidDataException("File locale troppo grande.");
+            return stream;
+        }
+        catch { stream.Dispose(); throw; }
+    }
+    internal static void RequireOpenedPath(FileStream stream,string path)=>RequireOpenedObject(stream.SafeFileHandle,path,false);
+    internal static FileAttributes RequireOpenedObject(SafeFileHandle handle,string path,bool linkObject,bool directoryObject=false)
+    {
+        var attributes=OperatingSystem.IsWindows()?File.GetAttributes(handle):FileAttributes.Normal;
+        if(linkObject?!attributes.HasFlag(FileAttributes.ReparsePoint):attributes.HasFlag(FileAttributes.ReparsePoint)||attributes.HasFlag(FileAttributes.Directory)!=directoryObject)throw new IOException("Il file locale aperto non corrisponde al tipo atteso.");
             if (OperatingSystem.IsWindows())
             {
                 var resolved = new StringBuilder(32768);
-                var length = GetFinalPathNameByHandle(stream.SafeFileHandle, resolved, (uint)resolved.Capacity, 0);
+                var length = GetFinalPathNameByHandle(handle, resolved, (uint)resolved.Capacity, 0);
                 if (length == 0 || length >= resolved.Capacity) throw new IOException("Impossibile verificare il file locale.", new Win32Exception(Marshal.GetLastWin32Error()));
                 var final = resolved.ToString();
                 if (final.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) final = @"\\" + final[8..];
                 else if (final.StartsWith(@"\\?\", StringComparison.Ordinal)) final = final[4..];
                 if (!string.Equals(final, path, StringComparison.OrdinalIgnoreCase)) throw new IOException("Il file locale è stato reindirizzato.");
             }
-            Child(directory, relative);
-            if (stream.Length > maximumBytes) throw new InvalidDataException("File locale troppo grande.");
-            return stream;
-        }
-        catch { stream.Dispose(); throw; }
+        return attributes;
     }
     public static byte[] Read(string directory, string relative, int maximumBytes)
     {

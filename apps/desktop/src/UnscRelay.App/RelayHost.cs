@@ -41,24 +41,38 @@ public partial class MainWindow
     UpdateRelease? update; string updateToken = ""; UpdateTokenStore updateTokens = null!; bool updating, updateClosing; int activeOperations;
     const string Origin = "https://relay.local";
     static Version CurrentVersion { get { var v = typeof(MainWindow).Assembly.GetName().Version!; return new Version(v.Major, v.Minor, v.Build); } }
-    void InitializeRelay()
+    LocalApplicationLease? applicationLease;Guid actualWorkspace;
+    bool initializingRelay;
+    async void InitializeRelay(){initializingRelay=true;Closing+=(_,e)=>{if(initializingRelay)e.Cancel=true;};try{await InitializeRelayChecked();}catch(Exception error)when(error is IOException or UnauthorizedAccessException or CryptographicException or InvalidOperationException or JsonException){if(blockedStartupWorkspace is{} blocked)ShowErasureVerificationLock(blocked);else ShowLocalDataLock(error is LocalAccountErasedException);}finally{initializingRelay=false;}}
+    async Task InitializeRelayChecked()
     {
-        dataPath=new AccountWorkspaces(rootDataPath).ActiveDirectory();Directory.CreateDirectory(dataPath);FolderSync.CheckLocalParents(dataPath);
+        try{applicationLease=new LocalApplicationLease(rootDataPath);Closed+=(_,_)=>applicationLease?.Dispose();await ResumeAccountErasure();actualWorkspace=new AccountWorkspaces(rootDataPath).Load().Active;new LocalErasureJournal(rootDataPath).GuardWorkspace(actualWorkspace);}
+        catch(Exception error)when(error is IOException or UnauthorizedAccessException or CryptographicException or InvalidOperationException or JsonException){if(blockedStartupWorkspace is{} blocked)ShowErasureVerificationLock(blocked);else ShowLocalDataLock(error is LocalAccountErasedException);return;}
+        dataPath=new AccountWorkspaces(rootDataPath).DirectoryFor(actualWorkspace);Directory.CreateDirectory(dataPath);FolderSync.CheckLocalParents(dataPath);
         SyncLocalBackup.Recover(dataPath);
-        store = new(dataPath); vault = new(Path.Combine(dataPath, "keys.vault")); hosts = new(Path.Combine(dataPath, "hostkeys.json")); data = store.Load(); updateTokens = new(rootDataPath); InitializeEditorPreference();
+        store = new(dataPath); vault = new(Path.Combine(dataPath, "keys.vault")); hosts = new(Path.Combine(dataPath, "hostkeys.json")); data = store.Load();nativeLanguage=InterfaceLocale.Normalize(data.Settings.Language);LocalLanguageChoice.Save(dataPath,nativeLanguage); updateTokens = new(rootDataPath); InitializeEditorPreference();
         foreach (var folder in data.Profiles.Select(p => p.Folder).ToArray()) FolderCatalog.Add(data, folder.Length == 0 ? "Connessioni" : folder);
         try{ExplorerExport.Prune(Path.Combine(dataPath,"DragExports"),DateTime.UtcNow);}catch(IOException){}catch(UnauthorizedAccessException){}
         LoadFileQueue();InitializeRecordingRetention();InitializeKeyConversion();
-        InitializeCloud();
+        InitializeCloud();InitializeErasureMonitor();
         InitializeBackgroundLifecycle();
         InitializeAssistantApi();
         if(smokeTest&&!sequenceSmokeTest){StartupCover.Visibility=System.Windows.Visibility.Collapsed;Browser.Visibility=System.Windows.Visibility.Visible;consoleReady=true;}
         if(sequenceSmokeTest)data.Settings=data.Settings with{StartupVolume=.23,ShutdownVolume=.61};
         data.Settings=SequencePolicy.Apply(data.Settings);startupSequencePlaying=sequenceSmokeTest||!smokeTest;startupSequenceWatch.Start();
         if (smokeTest) data.Settings = data.Settings with { StartupVideo = false, ShutdownVideo = false };
-        Loaded += async (_, _) => await InitializeBrowser(); Closing += OnRelayClosing;
+        if(IsLoaded)await InitializeBrowser();else Loaded += async (_, _) => await InitializeBrowser(); Closing += OnRelayClosing;
         Microsoft.Win32.SystemEvents.SessionSwitch += OnWindowsSessionSwitch;Closed += (_,_) => Microsoft.Win32.SystemEvents.SessionSwitch -= OnWindowsSessionSwitch;
-        lockTimer.Tick += (_, _) => { if(!CriticalUpdateRequired)RenewExternalCertificates(); if (!helloBusy && vault.IsUnlocked && DateTime.UtcNow - vault.LastAccessUtc > TimeSpan.FromMinutes(data.Settings.AutoLockMinutes)) { StopAllRecordings(); StopBundledAgent(); vault.Lock(); Emit("vault", new { unlocked = false }); } }; lockTimer.Start();
+        lockTimer.Tick += (_, _) => { if(nativeErasure is{} erasure&&(erasure.Expires<=DateTimeOffset.UtcNow||CriticalUpdateRequired||!vault.IsUnlocked||AppLocked||AccountLocked))ClearNativeErasure(); if(nativePlainExport is{} export&&(export.Expires<=DateTimeOffset.UtcNow||CriticalUpdateRequired||!vault.IsUnlocked||AppLocked||AccountLocked))ClearNativePlainExport(); if(!CriticalUpdateRequired)RenewExternalCertificates(); if (!helloBusy && vault.IsUnlocked && DateTime.UtcNow - vault.LastAccessUtc > TimeSpan.FromMinutes(data.Settings.AutoLockMinutes)) { StopAllRecordings(); StopBundledAgent(); ClearNativePlainExport(); LockVault(); Emit("vault", new { unlocked = false }); } }; lockTimer.Start();
+    }
+    void ShowLocalDataLock(bool erased)
+    {
+        var title=NativeText(erased?"Account cancellato":"Dati locali non verificabili");
+        var description=NativeText(erased?"L’accesso a questo account è stato revocato. I dati locali sono bloccati e nessun vecchio backup verrà ripristinato. La rimozione delle copie gestite deve essere completata.":"Relay non riesce a verificare in sicurezza il collegamento dell’account o il registro locale. Nessun archivio è stato aperto o ripristinato.");
+        var panel=new System.Windows.Controls.StackPanel{MaxWidth=640,Margin=new Thickness(32),VerticalAlignment=VerticalAlignment.Center,HorizontalAlignment=HorizontalAlignment.Center};
+        panel.Children.Add(new System.Windows.Controls.TextBlock{Text=title,FontSize=28,FontWeight=FontWeights.Bold,Foreground=System.Windows.Media.Brushes.White,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,20)});
+        panel.Children.Add(new System.Windows.Controls.TextBlock{Text=description,FontSize=17,Foreground=System.Windows.Media.Brushes.White,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,24)});
+        var exit=CreateNativeButton("Esci da Relay");exit.Click+=(_,_)=>Application.Current.Shutdown();panel.Children.Add(exit);Content=ErasureSurface(panel);Loaded+=(_,_)=>exit.Focus();
     }
     async Task InitializeBrowser()
     {
@@ -87,11 +101,11 @@ public partial class MainWindow
             Browser.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(new { type, payload }, ProfileStore.Json));
         });
     }
-    string Secret(string title, string text) => Dispatcher.Invoke(() => SecretDialog.Ask(this, title, text));
-    bool Confirm(string text) => configLogsSmokeTest&&diagnosticConfirm!=null?diagnosticConfirm(text):Dispatcher.Invoke(() => MessageBox.Show(this, text, "UNSC Relay", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes);
+    string Secret(string title, string text) => Dispatcher.Invoke(() => nativePresentationMode?throw new OperationCanceledException():SecretDialog.Ask(this, title, text));
+    bool Confirm(string text) {var generation=authenticationGeneration;var approved=configLogsSmokeTest&&diagnosticConfirm!=null?diagnosticConfirm(text):Dispatcher.Invoke(() => !nativePresentationMode&&new ConfirmationDialog(this,text).ShowDialog()==true);return approved&&generation==authenticationGeneration&&!AccountErasureLocked;}
     bool Trust(HostKey key) => Confirm($"Prima connessione a {key.Host}:{key.Port}\n\n{(key.IsCertificateAuthority ? "CA del certificato host" : "Chiave host")} · {key.Algorithm}\nSHA256: {key.Fingerprint}\n\nVerifica l'impronta con il gestore del server. {(key.IsCertificateAuthority ? "La fiducia nella CA sara limitata a questo host e questa porta." : "Memorizzare questa chiave?")}");
-    string? OpenFile(string title) { var d = new OpenFileDialog { Title = title }; return d.ShowDialog(this) == true ? d.FileName : null; }
-    string? SaveFile(string title, string name) { if(configLogsSmokeTest&&diagnosticSave!=null)return diagnosticSave(title,name);var d = new SaveFileDialog { Title = title, FileName = name }; return d.ShowDialog(this) == true ? d.FileName : null; }
+    string? OpenFile(string title) { if(nativePresentationMode)return null;var d = new OpenFileDialog { Title = title }; var generation=authenticationGeneration;var accepted=d.ShowDialog(this)==true;RequireOperationSession(generation);return accepted?d.FileName:null; }
+    string? SaveFile(string title, string name) { if(nativePresentationMode)return null;if(configLogsSmokeTest&&diagnosticSave!=null)return diagnosticSave(title,name);var d = new SaveFileDialog { Title = title, FileName = name }; var generation=authenticationGeneration;var accepted=d.ShowDialog(this)==true;RequireOperationSession(generation);return accepted?d.FileName:null; }
     static string S(JsonElement p, string k, string fallback = "") => p.TryGetProperty(k, out var v) ? v.GetString() ?? fallback : fallback;
     static int I(JsonElement p, string k, int fallback) => p.TryGetProperty(k, out var v) && v.TryGetInt32(out var n) ? n : fallback;
     SshSession Session(JsonElement p) => sessions.TryGetValue(S(p, "sessionId"), out var s) ? s : throw new InvalidOperationException("Sessione non disponibile.");
@@ -121,27 +135,38 @@ public partial class MainWindow
             }
             finally { activeOperations--; }
         }
-        catch (Exception ex) { Emit("reply", new { id, retryable = NetworkReconnect.IsTransient(ex), error = ex is CryptographicException ? "Password principale errata o archivio non integro." : ex is OperationCanceledException ? "Operazione annullata." : ex.Message }); }
+        catch (Exception ex) { Emit("reply", new { id, retryable = NetworkReconnect.IsTransient(ex), error = NativeText(ex is CryptographicException ? "Password principale errata o archivio non integro." : ex is OperationCanceledException ? "Operazione annullata." : ex.Message) }); }
     }
     async Task<object?> Execute(string action, JsonElement p)
     {
-        if(CriticalUpdateRequired && action is not("cancelTransfer" or "storageCancel" or "folderCancel" or "filePause" or "fileDiscard" or "conversionCancel" or "recordingStop" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationExit" or "exit" or "checkUpdates" or "installUpdate" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "activateMain"))throw new InvalidOperationException("È richiesto un aggiornamento di sicurezza critico. Apri Aggiornamenti per installarlo.");
+        if(action=="presentationMode")return SetPresentationMode(p.GetProperty("enabled").GetBoolean());
+        if(nativePresentationMode&&action is not("bootstrap" or "startupStarted" or "startupPresented" or "startupFinished"))throw new InvalidOperationException(NativeText("Disattiva presentazione"));
+        if(Volatile.Read(ref erasureRevocationFlag)!=0)throw new OperationCanceledException("Account cancellato. Chiusura delle attività in corso.");
+        if(CriticalUpdateRequired && action is not("keyInstallCancel" or "fileBridgeCancel" or "remoteSearchCancel" or "languageSettings" or "cancelTransfer" or "storageCancel" or "folderCancel" or "filePause" or "fileDiscard" or "conversionCancel" or "recordingStop" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationExit" or "exit" or "checkUpdates" or "installUpdate" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "activateMain"))throw new InvalidOperationException("È richiesto un aggiornamento di sicurezza critico. Apri Aggiornamenti per installarlo.");
         if (updating && action != "bootstrap") throw new InvalidOperationException("Attendi la fine dell’aggiornamento.");
-        if((AppLocked||AccountLocked) && action is not("workspaceList" or "workspaceSwitch" or "workspaceAdd" or "workspaceForget" or "accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
+        if((AppLocked||AccountLocked) && action is not("languageSettings" or "workspaceList" or "workspaceSwitch" or "workspaceAdd" or "workspaceForget" or "accountLogin" or "accountRegister" or "accountAvailability" or "accountStatus" or "accountSite" or "bootstrap" or "startupStarted" or "startupPresented" or "startupFinished" or "applicationAuthenticate" or "applicationExit" or "updateTokenStatus" or "updateTokenSave" or "updateTokenDelete" or "checkUpdates" or "installUpdate"))throw new InvalidOperationException("Autentica prima l’accesso alla console.");
         switch (action)
         {
-            case "workspaceList": case "workspaceSwitch": case "workspaceAdd": case "workspaceForget": return await WorkspaceAccountAction(action,p);
+            case "workspaceCustomize": case "workspaceList": case "workspaceSwitch": case "workspaceAdd": case "workspaceForget": return await WorkspaceAccountAction(action,p);
             case "nativeFilesOpen": return await OpenNativeFileWorkspace(p);
             case "storageNativeOpen": case "storageOpen": case "storageList": case "storageTransfer": case "storageCompare": case "storageChange": case "storageCancel": return await StorageAction(action,p);
             case "diagnosticPreview": return DiagnosticReport();
             case "diagnosticExport": return ExportDiagnostic();
-            case "archiveList": case "archiveLocalList": case "archivePrepare": case "archiveCreate": case "archiveRead": case "archiveRecover": case "archiveMembers": case "archiveRename": case "archiveRevoke": case "archiveAuthorize": case "archiveShare": case "archiveTransfer": case "archiveCopySecret": case "archiveUpdateRecord": case "archiveAddPassword": case "archiveDeleteRecord": case "archivePublish": case "archiveExport":
-            case "accountAvailability": case "accountRegister": case "accountSecurity": case "accountProfile": case "accountLogout": case "accountLogin": case "accountStatus": case "accountSite": case "accountSetup": case "accountSync": case "accountUiBusy": return await CloudAction(action,p);
-            case "fileLocation": case "localList": case "localChoose": case "sftpDirectory": case "sftpHome": case "fileCompare": case "sftpOperation":
-            case "folderCompare": case "folderSync": case "folderCancel": case "filePlan": case "fileParallelism": case "fileEnqueue": case "fileQueue": case "fileClear": case "filePause": case "fileResume": case "fileDiscard":
+            case "accountErasureStatus": case "accountErasureReview": case "accountErasureBegin": case "accountErasureConfirm": case "accountErasureClose": return await NativeErasureAction(action,p);
+            case "archivePlainReview": case "archivePlainBegin": case "archivePlainSave": case "archivePlainCancel": return await NativePlainExportAction(action,p);
+            case "archiveRequestAccess": case "archiveAccessRequests": case "archiveRequestApprove": case "archiveRequestDismiss": case "archiveList": case "archiveLocalList": case "archivePrepare": case "archiveCreate": case "archiveRead": case "archiveRecover": case "archiveStorageUsage": case "archiveActivity": case "archivePermissionsReport": case "archiveAccessReview": case "archiveAccessReviewed": case "archiveSharingReview": case "archiveSharingSet": case "archiveIntegrity": case "archiveIntegrityLast": case "archiveMembers": case "archiveRename": case "archiveRevoke": case "archiveAuthorize": case "archiveShare": case "archiveTransfer": case "archiveCopySecret": case "archiveCommentAdd": case "archiveUpdateRecord": case "archiveAddPassword": case "archiveDeleteRecord": case "archivePublish": case "archiveExport":
+            case "accountProfileSave": case "accountPasswordSave": case "accountMethodRename": case "accountMethodRemove": case "accountMethods": case "notificationOverview": case "notificationRead": case "notificationReadAll": case "notificationDisplay": case "accountStorageAttachmentDelete": case "accountStorageAttachments": case "accountStorageUsage": case "homeOverview": case "ticketFind": case "ticketLinks": case "ticketLinkCreate": case "ticketLinkDelete": case "ticketAttachmentPreview": case "ticketAttachmentSave": case "ticketList": case "ticketRead": case "ticketCreate": case "ticketReply":
+            case "accountAvailability": case "accountRegister": case "accountSecurity": case "accountProfile": case "accountLogout": case "accountLogin": case "accountStatus": case "accountSyncOverview": case "accountSite": case "accountSetup": case "accountSync": case "accountUiBusy": return await CloudAction(action,p);
+            case "remoteServerInfo": var infoGeneration=authenticationGeneration;RequireOperationSession(infoGeneration);using(var infoStop=CancellationTokenSource.CreateLinkedTokenSource(accountOperationStop.Token)){infoStop.CancelAfter(TimeSpan.FromSeconds(15));var info=await Session(p).ServerInfoAsync(S(p,"path"),infoStop.Token);RequireOperationSession(infoGeneration);return info;}
+            case "operationsOverview": return OperationsOverview(p);
+            case "privacyInventory": case "privacyCacheClear": case "privacyClean": return await PrivacyAction(action,p);
+            case "keyInstallKeys": case "keyInstallPreview": case "keyInstallApply": case "keyInstallCancel": return await PublicKeyInstallationAction(action,p);
+            case "remoteSearch": case "remoteSearchCancel": return await RemoteSearchAction(action,p);
+            case "fileLocation": case "localList": case "localChoose": case "remoteLog": case "sftpDirectory": case "sftpHome": case "fileCompare": case "sftpOperation":
+            case "folderCompare": case "folderSync": case "folderCancel": case "fileBridgeCancel": case "fileBridgeTargets": case "fileBridgePlan": case "fileBridgeEnqueue": case "filePlan": case "fileParallelism": case "fileEnqueue": case "fileQueue": case "fileClear": case "filePause": case "fileResume": case "fileDiscard":
             case "editorOpen": case "editorSave": case "editorExternal": case "editorPublish": case "editorAuto": case "editorDirty": case "editorReload": case "editorClose":
             case "clipboardWrite": case "clipboardRead": case "machineDelete": case "machineSave": return await FileAction(action, p);
-            case "confirmAction": return Confirm(S(p, "text"));
+            case "confirmAction": return Confirm(S(p,"text") is{Length:>0} text?text:S(p,"message"));
             case "nativeTools": case "nativeSelectFile": case "nativeTask": case "externalCertificateSave": case "externalCertificateIssue": case "externalCertificateStatus": return await AdvancedAction(action,p);
             case "localAvailability": return await LocalAvailability();
             case "localShellFolder": var localFolder=new OpenFolderDialog{Title="Cartella iniziale della shell"};return localFolder.ShowDialog(this)==true?localFolder.FolderName:null;
@@ -168,6 +193,16 @@ public partial class MainWindow
             case "recordingRetentionStatus": case "recordingRetentionSet": case "recordingStart": case "recordingStop": case "recordingList": case "recordingExportText": case "recordingRead": case "recordingDelete": case "recordingPrune": return RecordingAction(action,p);
             case "multiSend": case "sshConfigPreview": case "sshConfigImport": case "sshConfigWritePreview": case "sshConfigWriteApply": case "sshConfigExport": return WorkflowAction(action, p);
             case "desktopLayout": DesktopLayout(p); return null;
+            case "connectionTemplateSave": {if(data.ConnectionTemplates.Count>=50)throw new InvalidOperationException("Massimo 50 modelli di connessione.");var source=data.Profiles.Single(profile=>profile.Id==S(p,"profileId"));var template=ConnectionTemplate.Create(source,S(p,"name"));var previous=data.ConnectionTemplates;data.ConnectionTemplates=[..previous,template];try{store.Save(data);}catch{data.ConnectionTemplates=previous;throw;}return Snapshot();}
+            case "connectionTemplateDelete": {var previous=data.ConnectionTemplates;data.ConnectionTemplates=previous.Where(value=>value.Id!=S(p,"id")).ToList();try{store.Save(data);}catch{data.ConnectionTemplates=previous;throw;}return Snapshot();}
+            case "connectionTemplateUse": return data.ConnectionTemplates.Single(value=>value.Id==S(p,"id")).Instantiate(p.GetProperty("network").GetBoolean(),p.GetProperty("appearance").GetBoolean());
+            case "connectionProbe": {var generation=authenticationGeneration;var result=await ConnectionProbe.Run(data.Profiles.Single(profile=>profile.Id==S(p,"profileId")),accountOperationStop.Token);RequireOperationSession(generation);return result;}
+            case "connectionViewSave":
+                var view=p.GetProperty("view").Deserialize<ConnectionSearchView>(ProfileStore.Json)??throw new ArgumentException("Ricerca salvata non valida.");var previousViews=data.ConnectionViews;var proposedViews=previousViews.Where(value=>value.Id!=view.Id).Append(view).ToList();ConnectionSearchView.Validate(proposedViews);proposedViews=proposedViews.Select(value=>value.Id==view.Id?value with{Name=value.Name.Trim()}:value).ToList();data.ConnectionViews=proposedViews;try{store.Save(data);}catch{data.ConnectionViews=previousViews;throw;}return Snapshot();
+            case "connectionViewDelete":
+                var removedView=Guid.Parse(S(p,"id"));var oldViews=data.ConnectionViews;data.ConnectionViews=oldViews.Where(value=>value.Id!=removedView).ToList();try{store.Save(data);}catch{data.ConnectionViews=oldViews;throw;}return Snapshot();
+            case "connectionNotes":
+                var notesProfile=data.Profiles.Single(profile=>profile.Id==S(p,"profileId"));var notes=S(p,"notes");if(notes.Length>32768)throw new ArgumentException("Le istruzioni non possono superare 32.768 caratteri.");var operations=p.GetProperty("operations").Deserialize<ConnectionOperations>(ProfileStore.Json)??throw new ArgumentException("Note operative non valide.");operations.Validate();var expectedNotes=p.GetProperty("expected");var expectedOperations=expectedNotes.GetProperty("operations").Deserialize<ConnectionOperations>(ProfileStore.Json)??new();expectedOperations.Validate();if(S(expectedNotes,"notes")!=notesProfile.Notes||JsonSerializer.Serialize(expectedOperations,ProfileStore.Json)!=JsonSerializer.Serialize(notesProfile.Operations,ProfileStore.Json))throw new IOException("Le note sono cambiate. Conserva le modifiche e riapri il profilo prima di sostituirle.");var previousNotes=notesProfile.Notes;var previousOperations=notesProfile.Operations;notesProfile.Notes=notes;notesProfile.Operations=operations;try{store.Save(data);}catch{notesProfile.Notes=previousNotes;notesProfile.Operations=previousOperations;throw;}return Snapshot();
             case "saveProfile": return SaveConnectionProfile(p);
             case "folderCreate": FolderCatalog.Add(data, S(p, "path")); store.Save(data); return Snapshot();
             case "folderRename": FolderCatalog.Rename(data, S(p, "path"), S(p, "replacement")); store.Save(data); return Snapshot();
@@ -199,16 +234,24 @@ public partial class MainWindow
             case "openNotepadWebsite": Process.Start(new ProcessStartInfo("https://notepad-plus-plus.org/"){UseShellExecute=true});return null;
             case "editorResetProgram":
                 var oldEditorSettings=data.Settings;data.Settings=data.Settings with{ExternalEditor="",EditorPreference="notepad"};try{store.Save(data);}catch{data.Settings=oldEditorSettings;throw;}return Snapshot();
+            case "languageSettings":
+                var locale=InterfaceLocale.Require(S(p,"language"));var oldLocale=data.Settings;data.Settings=data.Settings with{Language=locale};try{store.Save(data);}catch{data.Settings=oldLocale;throw;}LocalLanguageChoice.Save(dataPath,locale);nativeLanguage=locale;cloud.UiLanguage=locale;return AccessBootstrap();
+            case "homeSettings": var homeCards=p.GetProperty("cards").Deserialize<string[]>()??throw new ArgumentException("Preferenze non valide.");if(homeCards.Length>4||homeCards.Distinct(StringComparer.Ordinal).Count()!=homeCards.Length||homeCards.Any(card=>card is not("archives" or "activity" or "tickets" or "notifications")))throw new ArgumentException("Preferenze non valide.");var previousHome=data.Settings;data.Settings=data.Settings with{HomeCards=homeCards};try{store.Save(data);}catch{data.Settings=previousHome;throw;}return Snapshot();
+            case "preferenceSyncSettings": var previousSyncSettings=data.Settings;data.Settings=data.Settings with{SyncLanguage=p.GetProperty("language").GetBoolean(),SyncMusic=p.GetProperty("music").GetBoolean()};try{store.Save(data);}catch{data.Settings=previousSyncSettings;throw;}return Snapshot();
+            case "resourceSettings":
+                var previousResources=data.Settings;data.Settings=data.Settings with{MeteredConnection=p.GetProperty("meteredConnection").GetBoolean(),ResourceSaving=p.GetProperty("resourceSaving").GetBoolean()};
+                try{store.Save(data);}catch{data.Settings=previousResources;throw;}
+                if(previousResources.MeteredConnection&&!data.Settings.MeteredConnection)foreach(var pendingEdit in editBuffers.Values.Where(edit=>edit.Dirty&&edit.AutoUpload).ToArray()){pendingEdit.MeteredPaused=false;ScheduleExternalSave(pendingEdit);}return Snapshot();
             case "lifecycleSettings":
                 var previousLifecycle=data.Settings;data.Settings=data.Settings with { CloseToTray=p.GetProperty("closeToTray").GetBoolean(), CheckUpdatesOnStartup=p.GetProperty("checkUpdatesOnStartup").GetBoolean(), CheckUpdatesDaily=p.GetProperty("checkUpdatesDaily").GetBoolean() };
                 try{store.Save(data);}catch{data.Settings=previousLifecycle;throw;}return Snapshot();
             case "settings":
                 var settings = p.Deserialize<UserSettings>(ProfileStore.Json) ?? new();
-                data.Settings = SequencePolicy.Apply(settings with { AutoLockMinutes = Math.Clamp(I(p, "autoLockMinutes", 10), 1, 120), StartupVolume=data.Settings.StartupVolume, ShutdownVolume=data.Settings.ShutdownVolume, RecordingRetentionDays = data.Settings.RecordingRetentionDays, RequireAppAuthentication=data.Settings.RequireAppAuthentication, AssistantApiEnabled=data.Settings.AssistantApiEnabled, AppMusicEnabled=data.Settings.AppMusicEnabled, AppMusicVolume=data.Settings.AppMusicVolume, ExternalEditor=data.Settings.ExternalEditor, EditorPreference=data.Settings.EditorPreference, CloseToTray=data.Settings.CloseToTray, CheckUpdatesOnStartup=data.Settings.CheckUpdatesOnStartup, CheckUpdatesDaily=data.Settings.CheckUpdatesDaily }); store.Save(data); return Snapshot();
+                data.Settings = SequencePolicy.Apply(settings with { AutoLockMinutes = Math.Clamp(I(p, "autoLockMinutes", 10), 1, 120), StartupVolume=data.Settings.StartupVolume, ShutdownVolume=data.Settings.ShutdownVolume, RecordingRetentionDays = data.Settings.RecordingRetentionDays, RequireAppAuthentication=data.Settings.RequireAppAuthentication, AssistantApiEnabled=data.Settings.AssistantApiEnabled, AppMusicEnabled=data.Settings.AppMusicEnabled, AppMusicVolume=data.Settings.AppMusicVolume, ExternalEditor=data.Settings.ExternalEditor, EditorPreference=data.Settings.EditorPreference, CloseToTray=data.Settings.CloseToTray, CheckUpdatesOnStartup=data.Settings.CheckUpdatesOnStartup, CheckUpdatesDaily=data.Settings.CheckUpdatesDaily, Language=data.Settings.Language, MeteredConnection=data.Settings.MeteredConnection, ResourceSaving=data.Settings.ResourceSaving,SyncLanguage=data.Settings.SyncLanguage,SyncMusic=data.Settings.SyncMusic,HomeCards=data.Settings.HomeCards }); store.Save(data); return Snapshot();
             case "vaultUnlock":
                 if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello.");
                 return await CloudAction("accountLogin",p);
-            case "vaultLock": if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello."); StopAllRecordings(); StopBundledAgent(); vault.Lock(); return Snapshot();
+            case "vaultLock": if (helloBusy) throw new InvalidOperationException("Completa prima la richiesta Windows Hello."); StopAllRecordings(); StopBundledAgent(); ClearNativePlainExport(); LockVault(); return Snapshot();
             case "helloEnable": return await EnableHello();
             case "helloUnlock": return await UnlockHello();
             case "helloDisable":
@@ -304,6 +347,7 @@ public partial class MainWindow
             case "recoveryPolicy": return SetRecoveryPolicy(p);
             case "recoverProfile": return await RecoverProfile(p);
             case "connect":
+                var connectGeneration=authenticationGeneration;RequireOperationSession(connectGeneration);
                 if (updating) throw new InvalidOperationException("Attendi la fine dell’aggiornamento.");
                 var automatic = p.TryGetProperty("automatic", out var auto) && auto.GetBoolean();
                 var selected = data.Profiles.FirstOrDefault(x => x.Id == S(p, "profileId")) ?? nativeTasks.GetValueOrDefault(S(p,"profileId")) ?? throw new ArgumentException("Profilo non trovato.");
@@ -317,15 +361,16 @@ public partial class MainWindow
                     var startupMacro=PrepareStartupMacro(selected,automatic);
                     if(selected.Protocol is "local" or "native")return await ConnectLocal(selected.Protocol=="local"?StartupMacros.LocalProfile(selected,startupMacro):selected,sid,p,startupMacro);
                     if (selected.Protocol is "rdp" or "vnc") return await ConnectDesktop(selected, sid);
-                    if(!automatic)await RunHooks(selected,"before-connect",required:true);
-                    var session = await SshRoutes.CreateAsync(selected, data.Profiles, (profile, endpointHost, endpointPort) => CreateAuthenticatedSession(profile, endpointHost, endpointPort, profile.Id == selected.Id ? sid : Guid.NewGuid().ToString("N"), automatic));
-                    if(CriticalUpdateRequired){session.Dispose();throw new OperationCanceledException("Aggiornamento critico richiesto.");}
+                    if(!automatic)await RunHooks(selected,"before-connect",required:true);RequireOperationSession(connectGeneration);
+                    var session = await SshRoutes.CreateAsync(selected, data.Profiles, async (profile, endpointHost, endpointPort) => {RequireOperationSession(connectGeneration);var created=await CreateAuthenticatedSession(profile, endpointHost, endpointPort, profile.Id == selected.Id ? sid : Guid.NewGuid().ToString("N"), automatic);try{RequireOperationSession(connectGeneration);return created;}catch{created.Dispose();throw;}});
+                    try{RequireOperationSession(connectGeneration);}catch{session.Dispose();throw;}
                     WireManagedSession(session); sessions.Add(session.Id, session);
-                    try { await Task.Run(() => session.ConnectAsync(I(p, "cols", 100), I(p, "rows", 30)));if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto."); } catch { sessions.Remove(session.Id); sessionRouteSnapshots.Remove(session.Id); brokenSessions.Remove(session.Id); session.Dispose(); throw; }
-                    if(!automatic){hookedSessions[sid]=selected;await RunHooks(selected,"after-connect",session);await RunStartupMacro(session,startupMacro);}
-                    if(CriticalUpdateRequired){await DisconnectWithHooks(sid,false);throw new OperationCanceledException("Aggiornamento critico richiesto.");}
-                    if (selected.Protocol == "sftp") RebindFileQueue(session.Profile.Id, session.Id);
-                    return new { sessionId = session.Id, filesAvailable = session.FilesAvailable };
+                    try {
+                        await Task.Run(() => session.ConnectAsync(I(p, "cols", 100), I(p, "rows", 30)));RequireOperationSession(connectGeneration);
+                        if(!automatic){hookedSessions[sid]=selected;await RunHooks(selected,"after-connect",session);RequireOperationSession(connectGeneration);await RunStartupMacro(session,startupMacro);RequireOperationSession(connectGeneration);}
+                        if (selected.Protocol == "sftp") RebindFileQueue(session.Profile.Id, session.Id);
+                        return new { sessionId = session.Id, filesAvailable = session.FilesAvailable };
+                    } catch {hookedSessions.TryRemove(sid,out _);sessions.Remove(session.Id);sessionRouteSnapshots.Remove(session.Id);brokenSessions.Remove(session.Id);session.Dispose();throw;}
                 }
                 finally { connectingSessions.Remove(sid); }
             case "input": if(localSessions.TryGetValue(S(p,"sessionId"),out var localInput))localInput.Write(S(p,"data"));else await Session(p).WriteInputAsync(S(p, "data")); return null;
@@ -422,19 +467,21 @@ public partial class MainWindow
     CancellationTokenSource? transferCancellation;
     async Task<object?> Transfer(JsonElement p)
     {
+        var generation=authenticationGeneration;RequireOperationSession(generation);var operationToken=accountOperationStop.Token;
         if (transferActive || QueueBusy || EditorsBusy || ExportBusy) throw new InvalidOperationException("Attendi il trasferimento in corso.");
         var s = Session(p); var upload = S(p, "direction") == "upload"; var remote = S(p, "remote");
         var local = upload ? OpenFile("Seleziona il file da caricare") : SaveFile("Salva il file remoto", remote.Split('/').Last()); if (local == null) return null;
         if (upload) { remote = remote.TrimEnd('/') + "/" + Path.GetFileName(local); if (!Confirm($"Caricare in {remote}? Un file esistente verrà sostituito.")) return null; }
-        transferActive = true; var last = DateTime.MinValue; transferCancellation = new();
-        try { await s.TransferAsync(local, remote, upload, false, (done, total) => { if (DateTime.UtcNow - last > TimeSpan.FromMilliseconds(200)) { last = DateTime.UtcNow; Emit("transfer", new { name = Path.GetFileName(local), progress = total > 0 ? done * 100.0 / total : 0, status = "Trasferimento" }); } }, transferCancellation.Token); Emit("transfer", new { name = Path.GetFileName(local), progress = 100, status = "Completato", finished = true }); }
+        if(upload)ConfirmProductionOperation(s.Profile,"Caricamento di file",resource:remote);RequireOperationSession(generation);transferActive = true; var last = DateTime.MinValue; transferCancellation = CancellationTokenSource.CreateLinkedTokenSource(operationToken);
+        try { await s.TransferAsync(local, remote, upload, false, (done, total) => { if (DateTime.UtcNow - last > TimeSpan.FromMilliseconds(200)) { last = DateTime.UtcNow; Emit("transfer", new { name = Path.GetFileName(local), progress = total > 0 ? done * 100.0 / total : 0, status = "Trasferimento" }); } }, transferCancellation.Token);RequireOperationSession(generation); Emit("transfer", new { name = Path.GetFileName(local), progress = 100, status = "Completato", finished = true }); }
         catch { Emit("transfer", new { name = Path.GetFileName(local), progress = 0, status = transferCancellation.IsCancellationRequested ? "Annullato" : "Non completato", finished = true }); throw; }
         finally { transferActive = false; transferCancellation.Dispose(); transferCancellation = null; } return null;
     }
     async void OnRelayClosing(object? sender, CancelEventArgs e)
     {
-        if (exitAllowed) return; e.Cancel = true;
-        if(!explicitExit&&!updateClosing&&!smokeTest&&data.Settings.CloseToTray&&backgroundIcon!=null){Hide();return;} if (closing) return; if(certificateRenewBusy){MessageBox.Show(this,"Attendi la fine della richiesta di certificato.","UNSC Relay");return;}
+        if (exitAllowed) return; e.Cancel = true;var requestedExit=explicitExit;explicitExit=false;
+        if(!requestedExit&&!updateClosing&&!smokeTest&&data.Settings.CloseToTray&&backgroundIcon!=null){Hide();return;} if (closing) return; if(certificateRenewBusy){MessageBox.Show(this,"Attendi la fine della richiesta di certificato.","UNSC Relay");return;}
+        if(nativePresentationMode)return;
         if(accessFinalWatch!=null&&!consoleReady&&accessFinalWatch.Elapsed.TotalSeconds<10)return;
         if(!updateClosing&&startupSequencePlaying&&startupSequenceWatch.Elapsed<TimeSpan.FromSeconds(20))return;
         if (updating && !updateClosing) { MessageBox.Show(this, "Attendi il completamento del download prima di chiudere.", "UNSC Relay"); return; }
@@ -442,21 +489,19 @@ public partial class MainWindow
         if(conversionOperation){MessageBox.Show(this,"Attendi l’operazione sulla chiave prima di chiudere.","UNSC Relay");return;}
         if (accessBusy) return;
         if (helloBusy) { MessageBox.Show(this, "Completa o annulla la richiesta Windows Hello prima di chiudere.", "UNSC Relay"); return; }
-        if (transferActive || QueueBusy || EditorsBusy || ExportBusy) { MessageBox.Show(this, "Attendi la fine del trasferimento prima di chiudere.", "UNSC Relay"); return; }
-        if (editBuffers.Values.Any(edit => edit.Dirty) && !Confirm(PendingEditorWarning()+" Uscire?")) return;
-        if(KeyConversionBusy&&!Confirm("Abbandonare la conversione e uscire? PuTTYgen rimane aperto e i file esportati restano sul PC."))return;
-        if(localSessions.Values.Any(s=>s.Running)&&!Confirm("Chiudere le sessioni locali e i programmi avviati al loro interno?"))return;
+        if(!updateClosing&&!smokeTest){if(!ReviewExit())return;}
+        if(ExitReviewSnapshot().Busy)return;
         CancelKeyConversion();
         closing = true; assistantStop.Cancel();
         try
         {
             backgroundUpdateTimer.Stop();backgroundIcon?.Dispose();backgroundIcon=null;
-            cloudTimer.Stop();cloudLifetime.Cancel();
+            cloudTimer.Stop();erasureMonitor.Stop();cloudLifetime.Cancel();
             await CloseAllStorage();
             await CloseAllLocal(!CriticalUpdateRequired&&!updateClosing);
             foreach (var id in editBuffers.Keys.ToArray()) CloseEditor(id);
             foreach (var id in desktopSessions.Keys.ToArray()) DisconnectDesktop(id);
-            foreach(var id in sessions.Keys.ToArray())await DisconnectWithHooks(id,!CriticalUpdateRequired&&!updateClosing); sessions.Clear(); store.Save(data); StopAllRecordings(); StopBundledAgent(); vault.Lock(); updateToken = ""; lockTimer.Stop();
+            foreach(var id in sessions.Keys.ToArray())await DisconnectWithHooks(id,!CriticalUpdateRequired&&!updateClosing); sessions.Clear(); store.Save(data); StopAllRecordings(); StopBundledAgent(); ClearNativePlainExport(); LockVault(); updateToken = ""; lockTimer.Stop();
             connectionPasswords.Clear();
             connectionPassphrases.Clear();
             shutdownDone = new(TaskCreationOptions.RunContinuationsAsynchronously); shutdownSequenceWatch=Stopwatch.StartNew(); Emit("shutdown", new { enabled = !updateClosing, volume = data.Settings.ShutdownVolume });

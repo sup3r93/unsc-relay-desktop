@@ -1,0 +1,17 @@
+using System.Text.Json;
+using Duende.IdentityModel.OidcClient.Browser;
+namespace UnscRelay.Core;
+public sealed record AccountErasureArchive(Guid Id,string Name,long Version,int OtherMembers);
+public sealed record AccountErasureReview(string Intent,string[] Fields,AccountErasureArchive[] Archives,int GraceDays=30,bool Cancel=false,DateTimeOffset? ExecuteAfter=null);
+public sealed record AccountErasureChallenge(Guid Id,string Email,DateTimeOffset ExpiresAt);
+public sealed partial class CloudAccountClient
+{
+ public Task<JsonElement> AccountDeletionStatus(CancellationToken ct)=>PortalRead("api/account/deletion",ct);
+ public async Task<AccountErasureReview> ReviewAccountDeletion(bool cancel,CancellationToken ct){
+  if(cancel){var value=await AccountDeletionStatus(ct);var status=value.GetProperty("status");var fields=value.GetProperty("cancelFields").Deserialize<string[]>()??[];if(status.GetProperty("state").GetString()!="pending"||fields.Length!=4||fields[0]!="account.delete.cancel"||fields[1]!="self"||!Guid.TryParse(fields[2],out _)||!DateTimeOffset.TryParse(fields[3],out _))throw new InvalidDataException("La richiesta non è più annullabile. Aggiorna lo stato.");return new(SensitiveIntentHash(fields),fields,[],30,true,status.GetProperty("executeAfter").GetDateTimeOffset());}
+  var review=(await PortalRead("api/account/deletion/review",ct)).Deserialize<AccountErasureReview>(VaultSyncCrypto.Json)??throw new InvalidDataException("Riepilogo di cancellazione non valido.");if(review.GraceDays!=30||review.Fields is not{Length:>=4}||review.Fields[0]!="account.delete"||review.Fields[1]!="self"||review.Fields[2]!="30"||review.Fields[3]!="owned-archives-and-account-data"||review.Cancel||review.Intent!=SensitiveIntentHash(review.Fields)||review.Archives is null||review.Archives.Length>1000||review.Archives.Any(a=>a.Id==Guid.Empty||a.Name.Length is <1 or >100||a.Version<0||a.OtherMembers<0))throw new InvalidDataException("Riepilogo di cancellazione non valido.");return review;
+ }
+ public async Task<AccountErasureChallenge> BeginAccountDeletion(AccountErasureReview review,IBrowser browser,CancellationToken ct){var proof=await ConfirmSensitive(review.Cancel?"account.delete.cancel":"account.delete","self",review.Intent,browser,ct);using var response=await Send(HttpMethod.Post,"api/account/deletion/"+(review.Cancel?"cancel":"request")+"/email",new{intent=review.Intent},ct,confirmation:proof);var challenge=(await PortalResult(response,ct)).Deserialize<AccountErasureChallenge>(VaultSyncCrypto.Json)??throw new InvalidDataException("Conferma email non valida.");if(challenge.Id==Guid.Empty||challenge.ExpiresAt<=DateTimeOffset.UtcNow||challenge.ExpiresAt>DateTimeOffset.UtcNow.AddMinutes(11)||challenge.Email.Length is <1 or >254)throw new InvalidDataException("Conferma email non valida.");return challenge;}
+ public async Task<JsonElement> ConfirmAccountDeletion(AccountErasureReview review,Guid challenge,string code,CancellationToken ct){if(challenge==Guid.Empty||code.Length is <8 or >16||code.Any(c=>!char.IsAsciiDigit(c)&&c is not(' ' or '-')))throw new ArgumentException("Inserisci il codice ricevuto via email.");return await PortalWrite("api/account/deletion/"+(review.Cancel?"cancel":"request")+"/confirm",new{challengeId=challenge,intent=review.Intent,code},ct);}
+ public async Task CancelAccountDeletionProof(Guid challenge,CancellationToken ct){using var response=await Send(HttpMethod.Post,"api/account/deletion/email/"+challenge.ToString("D")+"/cancel",null,ct);await PortalResult(response,ct);}
+}

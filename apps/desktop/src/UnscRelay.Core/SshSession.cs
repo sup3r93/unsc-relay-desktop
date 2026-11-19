@@ -76,6 +76,7 @@ public sealed partial class SshSession : IDisposable
             if (profile.Authentication is "auto" or "keyboard-interactive" || profile.KeyboardFallback) methods.Add(keyboard);
             if (methods.Count == 0) throw new ArgumentException("Il metodo di autenticazione selezionato non dispone di credenziali.");
             var info = new ConnectionInfo(endpointHost ?? profile.Host, endpointHost == null ? profile.Port : endpointPort, profile.Username, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(profile.ConnectTimeoutSeconds), Encoding = Encoding.UTF8 };
+            SshTransportPolicy.Apply(info);
             info.HostKeyAlgorithms.Remove("ssh-rsa");
             if (profile.RequirePostQuantumKex)
             {
@@ -154,7 +155,7 @@ public sealed partial class SshSession : IDisposable
     }
     public bool CanWrite => Connected && _shell is { CanWrite: true };
     public void Write(string value) { if (_shell is { CanWrite: true }) _shell.Write(value); }
-    internal Task ConnectTransportAsync() => _nativeFileChannel!=null?throw new InvalidOperationException("La sessione file nativa non apre trasporti SSH."):_ssh.ConnectAsync(CancellationToken.None);
+    internal Task ConnectTransportAsync(CancellationToken cancellation=default) => _nativeFileChannel!=null?throw new InvalidOperationException("La sessione file nativa non apre trasporti SSH."):_ssh.ConnectAsync(cancellation);
     internal void OwnRoute(SshSession? route) => _route = route;
     internal int ForwardTo(string host, int port)
     {

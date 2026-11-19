@@ -1,25 +1,262 @@
-'use strict';
-let contextMenu=null;
-async function copyText(text){if(!text)return;await call('clipboardWrite',{text})}
-async function pasteTerminal(pane){if(!pane?.connected||pane.desktop||pane.fileWorkspace||pane.editor)return;const text=await call('clipboardRead');if(typeof text!=='string'||!text)return;if(/[\r\n]/.test(text)&&!await call('confirmAction',{text:'Il testo contiene più righe e potrebbe eseguire comandi. Incollarlo nel terminale «'+pane.profile.name+'»?'}))return;pane.term.paste(text);pane.term.focus()}
-function wireTerminalClipboard(pane){let copying;pane.term.onSelectionChange(()=>{clearTimeout(copying);const selected=pane.term.getSelection();if(selected)copying=setTimeout(()=>{if(panes.has(pane.id)&&pane.term.getSelection()===selected)copyText(selected).catch(()=>{})},120)});pane.term.attachCustomKeyEventHandler(e=>{const copy=e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='c',paste=e.ctrlKey&&e.key.toLowerCase()==='v'||e.shiftKey&&e.key==='Insert';if(!copy&&!paste)return true;if(e.type==='keydown'){e.preventDefault();(copy?copyText(pane.term.getSelection()):pasteTerminal(pane)).catch(()=>{})}return false})}
-function closeContextMenu(){contextMenu?.remove();contextMenu=null;window.relayContextMenuOpen=false;scheduleDesktopLayout()}
-function contextActions(target){
- const actions=[];const add=(label,run,disabled=false)=>actions.push({label,run,disabled});
- const input=target.closest('input,textarea');
- if(input){const secret=input.type==='password',editable=!input.readOnly&&!input.disabled&&typeof input.selectionStart==='number';add('Taglia',async()=>{await copyText(input.value.slice(input.selectionStart,input.selectionEnd));input.setRangeText('',input.selectionStart,input.selectionEnd,'end');input.dispatchEvent(new Event('input',{bubbles:true}))},secret||!editable||input.selectionStart===input.selectionEnd);add('Copia',()=>copyText(input.value.slice(input.selectionStart,input.selectionEnd)),secret||typeof input.selectionStart!=='number'||input.selectionStart===input.selectionEnd);add('Incolla',async()=>{const text=await call('clipboardRead');if(typeof text!=='string')return;input.focus();input.setRangeText(text,input.selectionStart,input.selectionEnd,'end');input.dispatchEvent(new Event('input',{bubbles:true}))},!editable);add('Seleziona tutto',()=>{input.focus();input.select()},typeof input.select!=='function');return actions}
- const row=target.closest('.workspace-file-row'),column=target.closest('[data-file-side]');if(column){const pane=panes.get(column.dataset.filePane),side=column.dataset.fileSide;if(row){const file=pane.entries[side].find(f=>f.path===row.dataset.filePath);if(!pane.selection[side].has(file.path)){pane.selection[side].clear();pane.selection[side].add(file.path);renderFileRows(pane,side,pane[side+'Filter'].value)}if(file.directory)add('Apri cartella',()=>loadFileSide(pane,side,file.path));else{if(side==='remote'){add('Apri nell’editor esterno',()=>openEditorPane(pane,file,true));if(!externalEditorSelected()&&![...externalEdits.values()].some(e=>e.owner===pane.id&&e.path===file.path))add('Apri nell’editor integrato',()=>openEditorPane(pane,file));}add(side==='remote'?'Scarica selezionati':'Carica selezionati',()=>enqueueSelection(pane,side));add('Copia file',()=>copyFileSelection(pane,side))}add('Copia percorso',()=>copyText(file.path));if(side==='remote'){add('Trascina verso Esplora file',()=>prepareExplorerFiles(pane));add('Rinomina',()=>fileNameDialog(pane,'rename',file));add('Permessi…',()=>fileNameDialog(pane,'chmod',file));add('Elimina dal server',async()=>{await call('sftpOperation',{sessionId:pane.id,operation:'delete',path:file.path});await loadFileSide(pane,'remote',pane.remotePath)})}}
-  if(!row){for(const [key,label]of [['type','Tipo'],['name','Nome'],['modified','Data modifica'],['size','Dimensione'],['none','Nessuno']])add((pane.nav[side].view.group===key?'✓ ':'')+'Raggruppa per '+label,()=>{pane.nav[side].view.group=key;pane.surface.querySelector('[name=group-'+side+']').value=key;saveFileView(pane,side)})}
-  add('Incolla file dal pannello opposto',()=>pasteFiles(pane,side),!fileClipboard||fileClipboard.pane!==pane.id||fileClipboard.side===side);if(side==='remote')add('Nuova cartella',()=>fileNameDialog(pane,'mkdir'));add('Aggiorna',()=>loadFileSide(pane,side,side==='local'?pane.localPath:pane.remotePath));return actions
- }
- const storage=target.closest('.storage-viewport');if(storage){const pane=panes.get(storage.closest('.terminal-pane')?.dataset.sessionId);if(pane?.storageContext)return pane.storageContext(target.closest('[data-storage-path]')?.dataset.storagePath)}
- const keyRow=target.closest('[data-key-id]');if(keyRow){const key=state.vault.keys.find(k=>k.id===keyRow.dataset.keyId);if(key){add('Modifica nome e commento',()=>editKeyDialog(key));add('Copia chiave pubblica',()=>call('vaultCopyPublic',{keyId:key.id}));add('Copia impronta',()=>copyText(key.fingerprint));add('Elimina chiave',async()=>{update(await call('vaultDelete',{keyId:key.id}));keysDialog()})}return actions}
- const hostRow=target.closest('.host-table tbody tr');if(hostRow){const cells=hostRow.cells;const host=cells[0].textContent,port=Number(cells[1].textContent);add('Copia impronta',()=>copyText(cells[3].textContent));add('Dimentica host',async()=>{update(await call('hostForget',{host,port}));hostsDialog()});return actions}
- const profileRow=target.closest('[data-profile-id]');if(profileRow){const p=state.data.profiles.find(p=>p.id===profileRow.dataset.profileId);add('Connetti',()=>connect(p));if(['ssh','sftp'].includes(p.protocol))add('Apri SFTP in una tab',()=>openFileWorkspace(p));add('Modifica connessione',()=>profileDialog(p));add('Duplica',()=>profileDialog({...p,id:crypto.randomUUID().replaceAll('-',''),name:p.name+' — copia',passwordId:''}));add('Copia indirizzo e porta',()=>copyText(p.host+':'+p.port));add('Elimina connessione',async()=>update(await call('deleteProfile',{profileId:p.id})));return actions}
- const folder=target.closest('.folder-label');if(folder){const path=folder.closest('.folder-branch').dataset.folderPath;add('Gestisci cartella',()=>folderDialog(path));add('Nuova sottocartella',()=>{folderDialog();modal.querySelector('[name=path]').value=path+'/'});add('Nuova connessione',()=>{profileDialog();modal.querySelector('[name=folder]').value=path});return actions}
- const tab=target.closest('.tab'),surface=target.closest('.terminal-pane');const pane=panes.get(tab?.dataset.sessionId||surface?.dataset.sessionId);
- if(pane?.replay){add('Copia selezione',()=>copyText(pane.term.getSelection()),!pane.term.hasSelection());add('Seleziona tutto',()=>pane.term.selectAll());add(pane.detachedWindow?'Riporta nella finestra principale':'Apri in finestra separata',()=>pane.detachedWindow?call('detachedClose',{id:pane.id}):detachPane(pane));add('Rinomina tab',()=>renameTab(pane));add('Chiudi tab',()=>closePane(pane.id));return actions}if(pane){if(!pane.desktop&&!pane.fileWorkspace&&!pane.storageWorkspace&&!pane.editor){add('Copia selezione',()=>copyText(pane.term.getSelection()),!pane.term.hasSelection());add('Incolla',()=>pasteTerminal(pane),!pane.connected);add('Seleziona tutto',()=>pane.term.selectAll());if(!pane.local)add('Apri SFTP in una tab',()=>openFileWorkspace(pane.profile));add('Pulisci vista terminale',()=>pane.term.clear())}add(pane.detachedWindow?'Riporta nella finestra principale':'Apri in finestra separata',()=>pane.detachedWindow?call('detachedClose',{id:pane.id}):detachPane(pane));add('Rinomina tab',()=>renameTab(pane));add('Chiudi tab',()=>closePane(pane.id));return actions}
- const selection=window.getSelection()?.toString();if(selection)add('Copia testo selezionato',()=>copyText(selection));add('Nuova connessione',()=>profileDialog());add('Nuova cartella',()=>folderDialog());add('Rubrica macchine',machinesDialog);add('Impostazioni',settingsDialog);return actions
+"use strict";
+let contextMenu = null;
+async function copyText(text) {
+  if (!text) return;
+  await call("clipboardWrite", { text });
 }
-function bindContextDocument(doc){doc.addEventListener('contextmenu',e=>{if(!$('sequence').hidden)return;e.preventDefault();closeContextMenu();const target=e.target;const terminal=target.closest('.terminal-surface');if(terminal){const pane=panes.get(terminal.closest('.terminal-pane')?.dataset.sessionId);if(pane&&!pane.desktop&&!pane.fileWorkspace&&!pane.storageWorkspace&&!pane.editor&&!pane.replay){pasteTerminal(pane).catch(()=>{});return}}const actions=contextActions(target);const menu=document.createElement('div');menu.className='context-menu';menu.setAttribute('role','menu');for(const action of actions){const entry=button(action.label,async()=>{closeContextMenu();try{await action.run()}catch{}});entry.type='button';entry.setAttribute('role','menuitem');entry.disabled=action.disabled;menu.append(entry)}(doc===document&&modal.open?modal:doc.body).append(menu);contextMenu=menu;window.relayContextMenuOpen=true;menu.style.left=Math.min(e.clientX,doc.defaultView.innerWidth-menu.offsetWidth-10)+'px';menu.style.top=Math.max(8,Math.min(e.clientY,doc.defaultView.innerHeight-menu.offsetHeight-10))+'px';menu.querySelector('button:not(:disabled)')?.focus();scheduleDesktopLayout()});
-doc.addEventListener('pointerdown',e=>{if(contextMenu&&!contextMenu.contains(e.target))closeContextMenu()},true);doc.addEventListener('keydown',e=>{if(!contextMenu)return;const entries=[...contextMenu.querySelectorAll('button:not(:disabled)')];if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeContextMenu()}if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();const index=entries.indexOf(doc.activeElement);entries[(index+(e.key==='ArrowDown'?1:-1)+entries.length)%entries.length]?.focus()}},true);}bindContextDocument(document);modal.addEventListener('close',closeContextMenu);addEventListener('resize',closeContextMenu);
+async function pasteTerminal(pane) {
+  if (!pane?.connected || pane.desktop || pane.fileWorkspace || pane.editor) return;
+  const text = await call("clipboardRead");
+  if (typeof text !== "string" || !text) return;
+  if (/[\r\n]/.test(text) && !await call("confirmAction", { text: "Il testo contiene più righe e potrebbe eseguire comandi. Incollarlo nel terminale «" + pane.profile.name + "»?" })) return;
+  pane.term.paste(text);
+  pane.term.focus();
+}
+function wireTerminalClipboard(pane) {
+  let copying;
+  pane.term.onSelectionChange(() => {
+    clearTimeout(copying);
+    const selected = pane.term.getSelection();
+    if (selected) copying = setTimeout(() => {
+      if (panes.has(pane.id) && pane.term.getSelection() === selected) copyText(selected).catch(() => {
+      });
+    }, 120);
+  });
+  pane.term.attachCustomKeyEventHandler((e) => {
+    const copy = e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c", paste = e.ctrlKey && e.key.toLowerCase() === "v" || e.shiftKey && e.key === "Insert";
+    if (!copy && !paste) return true;
+    if (e.type === "keydown") {
+      e.preventDefault();
+      (copy ? copyText(pane.term.getSelection()) : pasteTerminal(pane)).catch(() => {
+      });
+    }
+    return false;
+  });
+}
+function closeContextMenu() {
+  contextMenu?.remove();
+  contextMenu = null;
+  window.relayContextMenuOpen = false;
+  scheduleDesktopLayout();
+}
+function contextActions(target) {
+  const actions = [];
+  const add = (label, run, disabled = false) => actions.push({ label, run, disabled });
+  const input = target.closest("input,textarea");
+  if (input) {
+    const secret = input.type === "password", editable = !input.readOnly && !input.disabled && typeof input.selectionStart === "number";
+    add("Taglia", async () => {
+      await copyText(input.value.slice(input.selectionStart, input.selectionEnd));
+      input.setRangeText("", input.selectionStart, input.selectionEnd, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, secret || !editable || input.selectionStart === input.selectionEnd);
+    add("Copia", () => copyText(input.value.slice(input.selectionStart, input.selectionEnd)), secret || typeof input.selectionStart !== "number" || input.selectionStart === input.selectionEnd);
+    add("Incolla", async () => {
+      const text = await call("clipboardRead");
+      if (typeof text !== "string") return;
+      input.focus();
+      input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, !editable);
+    add("Seleziona tutto", () => {
+      input.focus();
+      input.select();
+    }, typeof input.select !== "function");
+    return actions;
+  }
+  const row = target.closest(".workspace-file-row"), column = target.closest("[data-file-side]");
+  if (column) {
+    const pane2 = panes.get(column.dataset.filePane), side = column.dataset.fileSide;
+    if (!pane2 || !["local", "remote"].includes(side)) return actions;
+    if (row) {
+      const file = pane2.entries[side].find((f) => f.path === row.dataset.filePath);
+      if (!file) return actions;
+      if (!pane2.selection[side].has(file.path)) {
+        pane2.selection[side].clear();
+        pane2.selection[side].add(file.path);
+        renderFileRows(pane2, side, pane2[side + "Filter"].value);
+      }
+      if (file.directory) add("Apri cartella", () => loadFileSide(pane2, side, file.path));
+      else {
+        if (side === "remote") {
+          add("Apri nell’editor esterno", () => openEditorPane(pane2, file, true));
+          add("Visualizza log remoto", () => remoteLogDialog(pane2, file));
+          if (!externalEditorSelected() && ![...externalEdits.values()].some((e) => e.owner === pane2.id && e.path === file.path)) add("Apri nell’editor integrato", () => openEditorPane(pane2, file));
+        }
+        add(side === "remote" ? "Scarica selezionati" : "Carica selezionati", () => enqueueSelection(pane2, side));
+        add("Copia file", () => copyFileSelection(pane2, side));
+      }
+      add("Copia percorso", () => copyText(file.path));
+      if (side === "remote") {
+        add("Trascina verso Esplora file", () => prepareExplorerFiles(pane2));
+        add("Rinomina", () => fileNameDialog(pane2, "rename", file));
+        add("Permessi…", () => fileNameDialog(pane2, "chmod", file));
+        add("Elimina dal server", async () => {
+          await call("sftpOperation", { sessionId: pane2.id, operation: "delete", path: file.path });
+          await loadFileSide(pane2, "remote", pane2.remotePath);
+        });
+      }
+    }
+    if (!row) {
+      for (const [key, label] of [["type", "Tipo"], ["name", "Nome"], ["modified", "Data modifica"], ["size", "Dimensione"], ["none", "Nessuno"]]) add((pane2.nav[side].view.group === key ? "✓ " : "") + "Raggruppa per " + label, () => {
+        pane2.nav[side].view.group = key;
+        pane2.surface.querySelector("[name=group-" + side + "]").value = key;
+        saveFileView(pane2, side);
+      });
+    }
+    add("Incolla file dal pannello opposto", () => pasteFiles(pane2, side), !fileClipboard || fileClipboard.pane !== pane2.id || fileClipboard.side === side);
+    if (side === "remote") add("Nuova cartella", () => fileNameDialog(pane2, "mkdir"));
+    add("Aggiorna", () => loadFileSide(pane2, side, side === "local" ? pane2.localPath : pane2.remotePath));
+    return actions;
+  }
+  const storage = target.closest(".storage-viewport");
+  if (storage) {
+    const pane2 = panes.get(storage.closest(".terminal-pane")?.dataset.sessionId);
+    if (pane2?.storageContext) return pane2.storageContext(target.closest("[data-storage-path]")?.dataset.storagePath);
+  }
+  const keyRow = target.closest("[data-key-id]");
+  if (keyRow) {
+    const key = state.vault.keys.find((k) => k.id === keyRow.dataset.keyId);
+    if (key) {
+      add("Modifica nome e commento", () => editKeyDialog(key));
+      add("Copia chiave pubblica", () => call("vaultCopyPublic", { keyId: key.id }));
+      add("Copia impronta", () => copyText(key.fingerprint));
+      add("Elimina chiave", async () => {
+        update(await call("vaultDelete", { keyId: key.id }));
+        keysDialog();
+      });
+    }
+    return actions;
+  }
+  const hostRow = target.closest(".host-table tbody tr");
+  if (hostRow) {
+    const cells = hostRow.cells;
+    const host = cells[0].textContent, port = Number(cells[1].textContent);
+    add("Copia impronta", () => copyText(cells[3].textContent));
+    add("Dimentica host", async () => {
+      update(await call("hostForget", { host, port }));
+      hostsDialog();
+    });
+    return actions;
+  }
+  const profileRow = target.closest("[data-profile-id]");
+  if (profileRow) {
+    const p = state.data.profiles.find((p2) => p2.id === profileRow.dataset.profileId);
+    add("Connetti", () => connect(p));
+    if (["ssh", "sftp"].includes(p.protocol)) add("Apri SFTP in una tab", () => openFileWorkspace(p));
+    add("Verifica guidata della connessione", () => connectionGuideDialog(p));
+    add("Mappa della connessione", () => connectionMapDialog(p));
+    add("Note e checklist", () => connectionNotesDialog(p));
+    add("Salva modello di connessione", () => saveConnectionTemplateDialog(p));
+    add("Modifica connessione", () => profileDialog(p));
+    add("Duplica", () => profileDialog({ ...p, id: crypto.randomUUID().replaceAll("-", ""), name: p.name + " — copia", passwordId: "" }));
+    add("Copia indirizzo e porta", () => copyText(p.host + ":" + p.port));
+    add("Elimina connessione", async () => update(await call("deleteProfile", { profileId: p.id })));
+    return actions;
+  }
+  const folder = target.closest(".folder-label");
+  if (folder) {
+    const path = folder.closest(".folder-branch").dataset.folderPath;
+    add("Gestisci cartella", () => folderDialog(path));
+    add("Nuova sottocartella", () => {
+      folderDialog();
+      modal.querySelector("[name=path]").value = path + "/";
+    });
+    add("Nuova connessione", () => {
+      profileDialog();
+      modal.querySelector("[name=folder]").value = path;
+    });
+    return actions;
+  }
+  const tab = target.closest(".tab"), surface = target.closest(".terminal-pane");
+  const pane = panes.get(tab?.dataset.sessionId || surface?.dataset.sessionId);
+  if (pane?.replay) {
+    add("Copia selezione", () => copyText(pane.term.getSelection()), !pane.term.hasSelection());
+    add("Seleziona tutto", () => pane.term.selectAll());
+    add(pane.detachedWindow ? "Riporta nella finestra principale" : "Apri in finestra separata", () => pane.detachedWindow ? call("detachedClose", { id: pane.id }) : detachPane(pane));
+    add("Rinomina tab", () => renameTab(pane));
+    add("Chiudi tab", () => closePane(pane.id));
+    return actions;
+  }
+  if (pane) {
+    if (!pane.desktop && !pane.fileWorkspace && !pane.storageWorkspace && !pane.editor) {
+      add("Copia selezione", () => copyText(pane.term.getSelection()), !pane.term.hasSelection());
+      add("Incolla", () => pasteTerminal(pane), !pane.connected);
+      add("Seleziona tutto", () => pane.term.selectAll());
+      if (!pane.local) add("Apri SFTP in una tab", () => openFileWorkspace(pane.profile));
+      add("Pulisci vista terminale", () => pane.term.clear());
+    }
+    add(pane.detachedWindow ? "Riporta nella finestra principale" : "Apri in finestra separata", () => pane.detachedWindow ? call("detachedClose", { id: pane.id }) : detachPane(pane));
+    add("Rinomina tab", () => renameTab(pane));
+    add("Chiudi tab", () => closePane(pane.id));
+    return actions;
+  }
+  const selection = window.getSelection()?.toString();
+  if (selection) add("Copia testo selezionato", () => copyText(selection));
+  add("Nuova connessione", () => profileDialog());
+  add("Nuova cartella", () => folderDialog());
+  add("Rubrica macchine", machinesDialog);
+  add("Impostazioni", settingsDialog);
+  return actions;
+}
+function bindContextDocument(doc) {
+  doc.addEventListener("contextmenu", (e) => {
+    if (!$("sequence").hidden) return;
+    e.preventDefault();
+    closeContextMenu();
+    const target = e.target;
+    const terminal = target.closest(".terminal-surface");
+    if (terminal) {
+      const pane = panes.get(terminal.closest(".terminal-pane")?.dataset.sessionId);
+      if (pane && !pane.desktop && !pane.fileWorkspace && !pane.storageWorkspace && !pane.editor && !pane.replay) {
+        pasteTerminal(pane).catch(() => {
+        });
+        return;
+      }
+    }
+    const actions = contextActions(target);
+    const menu = document.createElement("div");
+    menu.className = "context-menu";
+    menu.setAttribute("role", "menu");
+    for (const action of actions) {
+      const entry = button(action.label, async () => {
+        closeContextMenu();
+        try {
+          await action.run();
+        } catch {
+        }
+      });
+      entry.type = "button";
+      entry.setAttribute("role", "menuitem");
+      entry.disabled = action.disabled;
+      menu.append(entry);
+    }
+    (doc === document && modal.open ? modal : doc.body).append(menu);
+    contextMenu = menu;
+    window.relayContextMenuOpen = true;
+    menu.style.left = Math.min(e.clientX, doc.defaultView.innerWidth - menu.offsetWidth - 10) + "px";
+    menu.style.top = Math.max(8, Math.min(e.clientY, doc.defaultView.innerHeight - menu.offsetHeight - 10)) + "px";
+    menu.querySelector("button:not(:disabled)")?.focus();
+    scheduleDesktopLayout();
+  });
+  doc.addEventListener("pointerdown", (e) => {
+    if (contextMenu && !contextMenu.contains(e.target)) closeContextMenu();
+  }, true);
+  doc.addEventListener("keydown", (e) => {
+    if (!contextMenu) return;
+    const entries = [...contextMenu.querySelectorAll("button:not(:disabled)")];
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeContextMenu();
+    }
+    if (["ArrowDown", "ArrowUp"].includes(e.key)) {
+      e.preventDefault();
+      const index = entries.indexOf(doc.activeElement);
+      entries[(index + (e.key === "ArrowDown" ? 1 : -1) + entries.length) % entries.length]?.focus();
+    }
+  }, true);
+}
+bindContextDocument(document);
+modal.addEventListener("close", closeContextMenu);
+addEventListener("resize", closeContextMenu);

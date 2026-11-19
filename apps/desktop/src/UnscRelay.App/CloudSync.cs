@@ -18,18 +18,18 @@ public partial class MainWindow
     bool AccountLocked=>accountLoggingOut||(!smokeTest&&!cloud.State.Activated);
     void InitializeCloud()
     {
-        cloud=new(dataPath);
+        cloud=new(dataPath){UiLanguage=InterfaceLocale.Normalize(data.Settings.Language)};
         cloudMessage=cloud.State.Activated?"Copia locale disponibile. La sincronizzazione riprende dopo lo sblocco.":cloudMessage;
-        cloudTimer.Tick+=async(_,_)=>{if(!CriticalUpdateRequired&&!smokeTest&&consoleReady&&!closing&&!updating&&!cloudUiBusy&&activeOperations==0)await SynchronizeCloud();};
+        cloudTimer.Tick+=async(_,_)=>{if(!CriticalUpdateRequired&&!smokeTest&&consoleReady&&!closing&&!updating&&!cloudUiBusy&&!PlainExportBusy&&!AccountErasureBusy&&activeOperations==0)await SynchronizeCloud(automatic:true);};
         if(!smokeTest)cloudTimer.Start();
     }
     object CloudStatus()=>new {requiresLink=AccountLocked,linked=cloud.State.Activated,name=cloud.State.Name,email=CloudAccountClient.RememberedEmail(cloud.State),
-        owner=cloud.State.Owner,ready=cloud.State.Migrated&&cloud.State.Header!=null,revision=cloud.State.Revision,online=cloudLastVerified>DateTimeOffset.UtcNow.AddSeconds(-90),lastVerified=cloudLastVerified,conflict=cloudConflict,personalRecovery=cloudPersonalRecovery,busy=cloudRunning,message=cloudMessage};
+        owner=cloud.State.Owner,ready=cloud.State.Migrated&&cloud.State.Header!=null,revision=cloud.State.Revision,online=cloudLastVerified>DateTimeOffset.UtcNow.AddSeconds(-90),lastVerified=cloudLastVerified,lastSuccessfulSync=cloud.State.LastSuccessfulSync,conflict=cloudConflict,personalRecovery=cloudPersonalRecovery,meteredConnection=data.Settings.MeteredConnection,meteredExternalPending=editBuffers.Values.Count(edit=>edit.ExternalOnly&&edit.Dirty),busy=cloudRunning,message=cloudMessage};
     void CloudNotify(string message){cloudMessage=message;Emit("account",CloudStatus());}
     static SyncEnvelope HeaderOnly(SyncEnvelope value)=>value with{Iv=Convert.ToBase64String(new byte[12]),Ciphertext=Convert.ToBase64String(new byte[16])};
     void Checkpoint(long revision,string hash,SyncEnvelope envelope)
     {
-        cloud.State.Revision=revision;cloud.State.Baseline=hash;cloud.State.Header=HeaderOnly(envelope);cloud.State.Migrated=true;cloud.Save();cloudConflict=false;
+        cloud.State.LastSuccessfulSync=DateTimeOffset.UtcNow;cloud.State.Revision=revision;cloud.State.Baseline=hash;cloud.State.Header=HeaderOnly(envelope);cloud.State.Migrated=true;cloud.Save();cloudConflict=false;
     }
     void PreserveRemote(RemoteVault remote)
     {
@@ -43,34 +43,36 @@ public partial class MainWindow
         SyncLocalBackup.Create(dataPath,true);
         try {
             vault.ImportSyncRecords(incoming.Records);
-            incoming.Data.Settings=data.Settings;incoming.Data.FileLocations=data.FileLocations;
+            incoming.Data.IntegrityObservations=data.IntegrityObservations;incoming.Data.Settings=incoming.Data.PortablePreferences.Apply(data.Settings);incoming.Data.FileLocations=data.FileLocations;
             store.Save(incoming.Data);
             AtomicFile.Write(Path.Combine(dataPath,"hostkeys.json"),JsonSerializer.SerializeToUtf8Bytes(incoming.HostKeys));
-            data=incoming.Data;
+            data=incoming.Data;nativeLanguage=InterfaceLocale.Normalize(data.Settings.Language);cloud.UiLanguage=nativeLanguage;
             var captured=VaultSyncCrypto.Capture(vault,data,hosts.List());
             try{Checkpoint(remote.Revision,VaultSyncCrypto.Hash(bytes),remote.Envelope);}finally{CryptographicOperations.ZeroMemory(captured);}
             SyncLocalBackup.Complete(dataPath);
         }catch {
             // Keep the journal until all four files have been restored successfully.
-            vault.Lock();SyncLocalBackup.Recover(dataPath);data=store.Load();
-            cloud.Dispose();cloud=new(dataPath);throw;
+            LockVault();SyncLocalBackup.Recover(dataPath);data=store.Load();
+            cloud.Dispose();cloud=new(dataPath){UiLanguage=InterfaceLocale.Normalize(data.Settings.Language)};AttachErasureNotification();throw;
         }
         Emit("data",Snapshot());
     }
-    async Task SynchronizeCloud(string resolution="",bool entered=false)
+    async Task SynchronizeCloud(string resolution="",bool entered=false,bool automatic=false)
     {
+        if(AccountErasureLocked||PlainExportBusy||AccountErasureBusy)return;
         if(!entered&&!await cloudGate.WaitAsync(0))return;
         cloudRunning=true;
         byte[]? key=null,local=null,remotePlain=null;
         try {
             if(!cloud.State.Activated)return;
-            await cloud.VerifyOnline(cloudLifetime.Token);cloudLastVerified=DateTimeOffset.UtcNow;
+            await cloud.VerifyOnline(cloudLifetime.Token);if(AccountErasureLocked)return;cloudLastVerified=DateTimeOffset.UtcNow;
+            if(automatic&&data.Settings.MeteredConnection){CloudNotify(NativeText("Connessione a consumo: sincronizzazione automatica in pausa. Usa Sincronizza adesso per procedere esplicitamente."));return;}
             if(!vault.IsUnlocked){CloudNotify("Archivio locale bloccato. Le modifiche saranno sincronizzate dopo lo sblocco.");return;}
             if(!cloud.State.Migrated||cloud.State.Header==null){CloudNotify("Completa la migrazione dell’archivio nelle impostazioni Account e sincronizzazione.");return;}
             key=vault.SyncKey(cloud.SyncOwner);
             if(key==null){CloudNotify("Sblocca l’archivio online con la sua password per collegare questo archivio locale.");return;}
             local=VaultSyncCrypto.Capture(vault,data,hosts.List());var localHash=VaultSyncCrypto.Hash(local);
-            var remote=await cloud.Read(cloudLifetime.Token);
+            var remote=await cloud.Read(cloudLifetime.Token);if(AccountErasureLocked)throw new TaskCanceledException("Account bloccato durante la verifica.");
             if(remote==null){cloudPersonalRecovery=true;throw new OnlineAccessException("L’archivio personale online è vuoto o è stato isolato per sicurezza. La copia locale è conservata. Apri Account e sincronizzazione → Ripristina sincronizzazione dalla copia locale verificata.");}
             if(remote.Revision<cloud.State.Revision)throw new OnlineAccessException("La revisione online è precedente all’ultima verificata. Sincronizzazione sospesa per proteggere i dati.");
             var decrypted=await Task.Run(()=>VaultSyncCrypto.Open(remote.Envelope,cloud.SyncOwner,key));
@@ -107,7 +109,9 @@ public partial class MainWindow
     }
     async Task<object?> CloudAction(string action,JsonElement p)
     {
+        if((PlainExportBusy||AccountErasureBusy)&&action is "accountLogin" or "accountLogout" or "accountSetup" or "accountSync" or "accountProfileSave" or "accountPasswordSave")throw new InvalidOperationException("Chiudi prima la finestra di esportazione o cancellazione.");
         if(action=="accountStatus")return CloudStatus();
+        if(action=="accountSyncOverview"){var generation=authenticationGeneration;var page=I(p,"page",0);if(page is <0 or >400)throw new ArgumentException("Pagina non valida.");bool? pending=null;if(vault.IsUnlocked&&cloud.State.Migrated&&cloud.State.Baseline.Length>0){var captured=VaultSyncCrypto.Capture(vault,data,hosts.List());try{pending=VaultSyncCrypto.Hash(captured)!=cloud.State.Baseline;}finally{CryptographicOperations.ZeroMemory(captured);}}var archives=new List<object>();var remembered=vault.IsUnlocked&&cloud.State.Owner.Length==64?vault.RememberedArchives(cloud.State.Owner).OrderBy(value=>value.Name,StringComparer.CurrentCulture).ToArray():[];foreach(var archive in remembered.Skip(page*50).Take(50)){ArchiveCopySummary? summary=null;var invalid=false;try{summary=LocalArchiveCopies.Summary(archive);}catch(Exception error)when(error is IOException or UnauthorizedAccessException or CryptographicException or JsonException or InvalidOperationException){invalid=true;}archives.Add(new{id=archive.Id,name=archive.Name,access=archive.Access,revision=summary?.Revision,pending=summary?.Pending,observedAt=summary?.ObservedAt,copyUpdatedAt=summary?.CopyUpdatedAt,invalid});}RequireOperationSession(generation);return new{account=CloudStatus(),pendingLocalChanges=pending,archives,page,hasMore=(page+1)*50<remembered.Length,totalArchives=remembered.Length};}
         if(action=="accountAvailability")return new{registrationAllowed=await cloud.RegistrationAllowed(cloudLifetime.Token)};
         if(action=="accountUiBusy"){cloudUiBusy=p.GetProperty("busy").GetBoolean();return null;}
         if(action=="accountSite"){Process.Start(new ProcessStartInfo("https://unsc.responda.eu/console"){UseShellExecute=true});return null;}
@@ -121,10 +125,43 @@ public partial class MainWindow
                 var remembered=new AccountWorkspaces(rootDataPath).Load();var binding=remembered.Accounts.SingleOrDefault(a=>a.Id==remembered.Active);
                 if(cloud.State.Owner.Length==0&&binding is {Owner.Length:64})cloud.State.Owner=binding.Owner;
                 await cloud.LoginAsync(cloudLifetime.Token,new InAppAccountBrowser(this,dataPath),accountAction);
-                if(accountAction is "login" or "register")await UnlockOnlineAfterLogin(generation);
+                if(accountAction is "login" or "register"){await VerifyErasureBeforeUnlock();await UnlockOnlineAfterLogin(generation);}
                 new AccountWorkspaces(rootDataPath).Remember(cloud.State);
                 cloudLastVerified=DateTimeOffset.UtcNow;CloudNotify("Account verificato per "+cloud.State.Name+". Windows Hello offline è disponibile solo dopo abilitazione manuale.");return AccessBootstrap();
             }
+            if(action=="accountMethodRename"){await cloud.RenameSecurityMethod(S(p,"id"),S(p,"name"),new InAppAccountBrowser(this,dataPath),cloudLifetime.Token);return true;}
+            if(action=="accountMethodRemove"){await cloud.RemoveSecurityMethod(S(p,"id"),new InAppAccountBrowser(this,dataPath),cloudLifetime.Token);return true;}
+            if(action=="accountProfileSave"){var result=await cloud.UpdatePersonalProfile(S(p,"firstName"),S(p,"lastName"),S(p,"email"),new InAppAccountBrowser(this,dataPath),cloudLifetime.Token);new AccountWorkspaces(rootDataPath).Remember(cloud.State);return result;}
+            if(action=="accountPasswordSave")return await cloud.UpdatePersonalPassword(S(p,"password"),new InAppAccountBrowser(this,dataPath),cloudLifetime.Token);
+            if(action=="accountMethods")return await cloud.SecurityMethods(cloudLifetime.Token);
+            if(action is "ticketFind" or "ticketLinks" or "ticketLinkCreate" or "ticketLinkDelete"){
+                var linkGeneration=authenticationGeneration;RequireOperationSession(linkGeneration);object links=action switch{"ticketFind"=>await cloud.Tickets(accountOperationStop.Token,S(p,"search")),"ticketLinks"=>await cloud.TicketLinks(Guid.Parse(S(p,"id")),accountOperationStop.Token),"ticketLinkCreate"=>await cloud.LinkTickets(Guid.Parse(S(p,"id")),Guid.Parse(S(p,"relatedId")),S(p,"kind"),accountOperationStop.Token),_=>await cloud.UnlinkTickets(Guid.Parse(S(p,"id")),Guid.Parse(S(p,"link")),accountOperationStop.Token)};RequireOperationSession(linkGeneration);return links;
+            }
+            if(action is "notificationOverview" or "notificationRead" or "notificationReadAll" or "notificationDisplay"){
+                var notificationGeneration=authenticationGeneration;RequireOperationSession(notificationGeneration);object result;
+                if(action=="notificationRead")result=await cloud.ReadNotification(Guid.Parse(S(p,"id")),accountOperationStop.Token);
+                else if(action=="notificationReadAll")result=await cloud.ReadAllNotifications(accountOperationStop.Token);
+                else if(action=="notificationDisplay")result=await cloud.NotificationDisplay(p.GetProperty("value"),p.GetProperty("version").GetInt64(),accountOperationStop.Token);
+                else{var rows=await cloud.HomeNotifications(accountOperationStop.Token);var summary=await cloud.NotificationSummary(accountOperationStop.Token);var workspace=await cloud.WorkspaceSettings(accountOperationStop.Token);result=new{rows,summary,workspace};}
+                RequireOperationSession(notificationGeneration);return result;
+            }
+            if(action=="accountStorageAttachmentDelete"){var generation=authenticationGeneration;RequireOperationSession(generation);var result=await cloud.DeleteStorageAttachment(p.GetProperty("attachmentId").GetGuid(),accountOperationStop.Token);RequireOperationSession(generation);return result;}
+            if(action=="accountStorageAttachments"){var attachmentsGeneration=authenticationGeneration;RequireOperationSession(attachmentsGeneration);var attachments=await cloud.StorageAttachments(p.GetProperty("page").GetInt32(),accountOperationStop.Token);RequireOperationSession(attachmentsGeneration);return attachments;}
+            if(action=="accountStorageUsage"){var usageGeneration=authenticationGeneration;RequireOperationSession(usageGeneration);var usage=await cloud.StorageUsage(accountOperationStop.Token);RequireOperationSession(usageGeneration);return usage;}
+            if(action=="homeOverview"){
+                var generation=authenticationGeneration;RequireOperationSession(generation);var owner=cloud.State.Owner;
+                var archives=await cloud.Archives(accountOperationStop.Token);RequireOperationSession(generation);
+                var tickets=await cloud.Tickets(accountOperationStop.Token);RequireOperationSession(generation);
+                var notifications=await cloud.HomeNotifications(accountOperationStop.Token);RequireOperationSession(generation);
+                if(owner!=cloud.State.Owner)throw new OperationCanceledException();return new{archives,tickets,notifications,checkedAt=DateTimeOffset.UtcNow};
+            }
+            if(action=="ticketList")return await cloud.Tickets(cloudLifetime.Token);
+            if(action is "ticketAttachmentPreview" or "ticketAttachmentSave"){
+                var attachmentGeneration=authenticationGeneration;RequireOperationSession(attachmentGeneration);var attachmentOwner=cloud.State.Owner;var preview=await cloud.TicketAttachment(Guid.Parse(S(p,"id")),Guid.Parse(S(p,"attachment")),accountOperationStop.Token);RequireOperationSession(attachmentGeneration);if(cloud.State.Owner!=attachmentOwner)throw new OperationCanceledException();if(action=="ticketAttachmentPreview")return preview;var destination=SaveFile(NativeText("Salva allegato"),preview.Name);if(destination==null)return false;RequireOperationSession(attachmentGeneration);var fullDestination=Path.GetFullPath(destination);if(fullDestination.StartsWith(Path.GetFullPath(dataPath).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||fullDestination.StartsWith(Path.GetFullPath(AppContext.BaseDirectory),StringComparison.OrdinalIgnoreCase))throw new IOException("Salva l’allegato fuori dalle cartelle dati e installazione dell’app.");var attachmentBytes=Convert.FromBase64String(preview.Data);try{PrivateKeyExport.Write(fullDestination,attachmentBytes);return true;}finally{CryptographicOperations.ZeroMemory(attachmentBytes);}
+            }
+            if(action=="ticketRead")return await cloud.Ticket(Guid.Parse(S(p,"id")),cloudLifetime.Token);
+            if(action=="ticketCreate")return await cloud.CreateTicket(S(p,"title"),S(p,"body"),S(p,"category"),S(p,"priority"),cloudLifetime.Token);
+            if(action=="ticketReply")return await cloud.ReplyTicket(Guid.Parse(S(p,"id")),S(p,"body"),p.GetProperty("version").GetInt64(),cloudLifetime.Token);
             if(action=="accountProfile")return await cloud.Profile(cloudLifetime.Token);
             if(action=="accountLogout"){
                 if(activeOperations>1||transferActive||QueueBusy||EditorsBusy||ExportBusy||helloBusy||certificateRenewBusy||connectingSessions.Count>0)throw new InvalidOperationException("Completa o metti in pausa le operazioni in corso prima di uscire.");
@@ -133,7 +170,7 @@ public partial class MainWindow
                 try{await CloseAllStorage();await CloseAllLocal();foreach(var editor in editBuffers.Keys.ToArray())CloseEditor(editor);
                 foreach(var session in desktopSessions.Keys.ToArray())DisconnectDesktop(session);
                 foreach(var session in sessions.Keys.ToArray())await DisconnectWithHooks(session,false);
-                CloseDetachedWindows();StopAllRecordings();StopBundledAgent();vault.Lock();connectionPasswords.Clear();connectionPassphrases.Clear();assistantOutput.Clear();
+                CloseDetachedWindows();StopAllRecordings();StopBundledAgent();ClearNativePlainExport();LockVault();connectionPasswords.Clear();connectionPassphrases.Clear();assistantOutput.Clear();
                 appAuthenticated=false;consoleReady=false;authenticationGeneration++;store.Save(data);
                 await cloud.LogoutAsync(cloudLifetime.Token);cloudLastVerified=null;CloudNotify("Account disconnesso. I dati locali restano cifrati.");return AccessBootstrap();
                 }finally{accountLoggingOut=false;}
@@ -156,7 +193,7 @@ public partial class MainWindow
                 }
                 var targetPersonal=await cloud.PersonalArchive(cloudLifetime.Token);
                 if(targetPersonal.ArchiveOwner!=cloud.SyncOwner){cloudPersonalRecovery=true;throw new InvalidOperationException("L’archivio personale è cambiato. Usa Ripristina sincronizzazione dalla copia locale verificata; i dati esistenti sono conservati.");}
-                var remote=await cloud.Read(cloudLifetime.Token);
+                var remote=await cloud.Read(cloudLifetime.Token);if(AccountErasureLocked)throw new TaskCanceledException("Account bloccato durante la verifica.");
                 if(remote==null)VaultPasswordPolicy.ValidateCreation(password,S(p,"confirmation"));
                 byte[]? key=null,plain=null;
                 SyncLocalBackup.Create(dataPath,false);

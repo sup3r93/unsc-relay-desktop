@@ -1,10 +1,20 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
 const source=fs.readFileSync(path.join(__dirname,'../src/UnscRelay.App/Web/file-follow.js'),'utf8');
-const literal=source.match(/const command=("(?:\\.|[^"\\])*");/);
+const literal=source.match(/const command\s*=\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*');/);
+function parseReviewedLiteral(raw){
+ if(raw[0]==='"')return JSON.parse(raw);
+ let value='';const escapes={"'":"'",'"':'"','\\':'\\',b:'\b',f:'\f',n:'\n',r:'\r',t:'\t',v:'\v',0:'\0'};
+ for(let i=1;i<raw.length-1;i++){
+  if(raw[i]!=='\\'){value+=raw[i];continue;}
+  const escape=raw[++i];if(!Object.hasOwn(escapes,escape))throw Error('Unexpected escape in reviewed literal');
+  value+=escapes[escape];
+ }
+ return value;
+}
 if(!literal)throw Error('Missing JSON command literal');
 // Execute a pinned command only after comparing the production literal. Never evaluate repository text.
 const command="__relay_cwd(){ local p=\"$PWD\"; p=\"${p//%/%25}\"; p=\"${p// /%20}\"; p=\"${p//#/%23}\"; p=\"${p//\\?/%3F}\"; printf '\\033]7;file://%s%s\\007' \"$HOSTNAME\" \"$p\"; }; PROMPT_COMMAND+=(__relay_cwd); __relay_cwd\r";
-assert.equal(JSON.parse(literal[1]),command,'Production Bash integration must match the reviewed command');
+assert.equal(parseReviewedLiteral(literal[1]),command,'Production Bash integration must match the reviewed command');
 if(process.argv[2]==='--validate-only'){console.log('PASS pinned Bash command matches production without code evaluation');process.exit(0);}
 const bundled=path.resolve(__dirname,'../src/UnscRelay.App/Tools/Cygwin/bin/bash.exe');
 const candidates=process.platform==='win32'?[bundled]:['/bin/bash','/usr/bin/bash'];

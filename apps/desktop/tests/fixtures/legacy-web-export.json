@@ -1,0 +1,13 @@
+{
+  "password": "Synthetic browser legacy export vector only!",
+  "expectedName": "original-key.pem",
+  "expectedBase64": "b3JpZ2luYWwga2V5IGZpeHR1cmUgYnl0ZXMg4oCUIG5vdCBhIHJlYWwga2V5",
+  "envelope": {
+    "version": 1,
+    "kdf": "PBKDF2-SHA256",
+    "iterations": 600000,
+    "salt": "KOttjOKKeELpK/bxyk2M6w==",
+    "iv": "ZfpfCzUWG6dgO/l5",
+    "ciphertext": "6jPLNrE9EE0533qzeWHrIQTWh56MkL+vzs523AzqII4KfKIRd8AGB+K2tMGkt9locMXctHBazexLWMabwr4w6nIHtQfn1rL9fLNltjWaxEnrU87cOHbev2lIEQShuNWK/eNEOYVaJI8bQQEPJ54rV7Y="
+  }
+}

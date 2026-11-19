@@ -6,7 +6,7 @@ using Renci.SshNet;
 
 namespace UnscRelay.Core;
 
-public sealed record KeyInfo(string Id, string Name, string Comment, DateTime Created, string PublicKey = "", string Fingerprint = "", SshCertificateInfo? Certificate = null, string Algorithm = "", int Bits = 0, string Kind = "ssh-key");
+public sealed record KeyInfo(string Id, string Name, string Comment, DateTime Created, string PublicKey = "", string Fingerprint = "", SshCertificateInfo? Certificate = null, string Algorithm = "", int Bits = 0, string Kind = "ssh-key", [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] List<ItemComment>? Discussion = null);
 internal sealed record KeyRecord(KeyInfo Info, byte[] Content);
 internal sealed record VaultEnvelope(int Version, string Salt, string Nonce, string Tag, string Ciphertext, List<VaultPasskey>? Passkeys = null, WindowsHelloBinding? WindowsHello = null);
 

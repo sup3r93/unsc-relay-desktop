@@ -30,7 +30,7 @@ public partial class MainWindow
 {
     readonly List<ExportDragWindow> exportWindows=[];
     int exportOperations;
-    bool ExportBusy=>exportOperations>0;
+    bool ExportBusy=>exportOperations>0||PlainExportBusy||AccountErasureBusy;
     void CloseExportWindows(){foreach(var window in exportWindows.ToArray())window.Close();}
     async Task<object?> PrepareExplorerExport(JsonElement payload)
     {

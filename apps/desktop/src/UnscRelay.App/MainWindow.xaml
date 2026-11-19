@@ -6,6 +6,6 @@
         xmlns:local="clr-namespace:UnscRelay.App"
         xmlns:wv="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title="UNSC Relay" Height="920" Width="1480" MinWidth="1000" MinHeight="680" Background="#091013" WindowStartupLocation="CenterScreen" WindowState="Maximized">
+        Title="UNSC Relay" Height="920" Width="1480" MinWidth="640" MinHeight="480" Background="#091013" WindowStartupLocation="CenterScreen" WindowState="Maximized">
     <Grid><wv:WebView2 x:Name="Browser" Visibility="Hidden" DefaultBackgroundColor="#091013" /><Canvas x:Name="DesktopLayer" IsHitTestVisible="True" /><Border x:Name="StartupCover" Background="#071114"><StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><Image Source="Assets/Relay.ico" Width="128" Height="128"/><TextBlock Text="UNSC // RELAY" Foreground="#B6CC86" FontFamily="Consolas" FontSize="36" HorizontalAlignment="Center" Margin="0,25,0,12"/><TextBlock Text="INIZIALIZZAZIONE CONSOLE" Foreground="#849A89" FontFamily="Consolas" HorizontalAlignment="Center"/><ProgressBar IsIndeterminate="True" Width="320" Height="3" Margin="0,25,0,0" Foreground="#B6CC86" Background="#14251D"/></StackPanel></Border></Grid>
 </Window>

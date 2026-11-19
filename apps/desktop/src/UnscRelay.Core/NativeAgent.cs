@@ -11,7 +11,7 @@ public sealed class TemporaryNativeAgent : IAsyncDisposable
 }
 public static class NativeAgent
 {
-    public static string SocketForHome(string home) => Path.Combine(Path.GetTempPath(), "ur-" + Environment.ProcessId + "-" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(home).ToUpperInvariant())))[..12] + ".sock");
+    public static string SocketForHome(string home) => LocalDataFiles.Child(Path.GetTempPath(), "ur-" + Environment.ProcessId + "-" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(home).ToUpperInvariant())))[..12] + ".sock");
     public static byte[] CompatibleIdentity(byte[] content, string passphrase = "")
     {
         using var input = new MemoryStream(content, false);

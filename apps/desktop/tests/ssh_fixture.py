@@ -1,5 +1,6 @@
 """Loopback-only integration fixture using Paramiko, never a user's SSH server."""
 import errno
+import stat as file_stat
 import os
 from pathlib import Path
 import socket
@@ -9,6 +10,8 @@ import tempfile
 import threading
 import logging
 import paramiko
+
+fixture_modes = {}  # Windows loopback emulates POSIX mode bits, shared by its SFTP channels.
 
 ROOT = Path(__file__).resolve().parents[1]
 logging.getLogger("paramiko.transport").setLevel(logging.CRITICAL)
@@ -65,12 +68,26 @@ class Authentication(paramiko.ServerInterface):
     def check_auth_password(self, username, password):
         if "--native-control" in sys.argv:
             with open(Path(self.directory) / "control-auth.txt", "a") as trace: trace.write("auth\n")
-        return paramiko.AUTH_SUCCESSFUL if username in ("test", "password-only") and password == "relay-test-password" else paramiko.AUTH_FAILED
+        if username == "install-test":
+            with open(Path(self.directory) / 'install-auth.log', 'a') as trace: trace.write('password\n')
+        self.username = username
+        return paramiko.AUTH_SUCCESSFUL if username in ("test", "password-only", "install-test") and password == "relay-test-password" else paramiko.AUTH_FAILED
 
     def get_allowed_auths(self, username):
         return "password,publickey"
 
     def check_auth_publickey(self, username, key):
+        self.username = username
+        if username == 'install-test':
+            with open(Path(self.directory) / 'install-auth.log', 'a') as trace: trace.write('publickey\n')
+            authorized = Path(self.directory) / '.ssh' / 'authorized_keys'
+            if authorized.exists():
+                for line in authorized.read_text(encoding='utf-8').splitlines():
+                    if line.lstrip().startswith('#'): continue
+                    fields = line.split()
+                    if any(fields[index] == key.get_name() and fields[index+1] == key.get_base64() for index in range(len(fields)-1)):
+                        return paramiko.AUTH_SUCCESSFUL
+            return paramiko.AUTH_FAILED
         if username == "test-cert":
             kind = getattr(getattr(key, 'public_blob', None), 'key_type', '')
             if self.directory:
@@ -80,6 +97,8 @@ class Authentication(paramiko.ServerInterface):
         return paramiko.AUTH_SUCCESSFUL if username == "test" else paramiko.AUTH_FAILED
 
     def check_channel_request(self, kind, channel_id):
+        if getattr(self, 'username', '') == 'install-test':
+            with open(Path(self.directory) / 'install-channels.log', 'a') as trace: trace.write(kind+'\n')
         return paramiko.OPEN_SUCCEEDED if kind == "session" else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_channel_pty_request(self, *args):
@@ -140,17 +159,24 @@ class Files(paramiko.SFTPServerInterface):
             raise PermissionError(errno.EACCES, "Outside fixture directory")
         return result
 
+    def attrs(self, path):
+        result = paramiko.SFTPAttributes.from_stat(path.stat())
+        if os.name == 'nt':
+            mode = fixture_modes.get(str(path), 0o755 if path.is_dir() else 0o644)
+            result.st_mode = file_stat.S_IFMT(result.st_mode) | mode
+        return result
+
     def list_folder(self, path):
         result = []
         for file in self.local(path).iterdir():
-            item = paramiko.SFTPAttributes.from_stat(file.stat())
+            item = self.attrs(file)
             item.filename = file.name
             result.append(item)
         return result
 
     def stat(self, path):
         try:
-            return paramiko.SFTPAttributes.from_stat(self.local(path).stat())
+            return self.attrs(self.local(path))
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)
 
@@ -171,6 +197,7 @@ class Files(paramiko.SFTPServerInterface):
     def rename(self, old, new):
         try:
             os.rename(self.local(old), self.local(new))
+            if str(self.local(old)) in fixture_modes: fixture_modes[str(self.local(new))] = fixture_modes.pop(str(self.local(old)))
             return paramiko.SFTP_OK
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)
@@ -178,6 +205,7 @@ class Files(paramiko.SFTPServerInterface):
     def posix_rename(self, old, new):
         try:
             os.replace(self.local(old), self.local(new))
+            if str(self.local(old)) in fixture_modes: fixture_modes[str(self.local(new))] = fixture_modes.pop(str(self.local(old)))
             return paramiko.SFTP_OK
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)
@@ -200,6 +228,7 @@ class Files(paramiko.SFTPServerInterface):
         try:
             if attributes.st_mode is not None:
                 os.chmod(self.local(path), attributes.st_mode)
+                fixture_modes[str(self.local(path))] = attributes.st_mode & 0o7777
             return paramiko.SFTP_OK
         except OSError as error:
             return paramiko.SFTPServer.convert_errno(error.errno)

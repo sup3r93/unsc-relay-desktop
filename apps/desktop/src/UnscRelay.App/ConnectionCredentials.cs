@@ -10,12 +10,12 @@ public partial class MainWindow
     {
         var profile = data.Profiles.Single(p => p.Id == id);
         if (profile.PasswordId.Length > 0 && !vault.IsUnlocked) throw new InvalidOperationException("Sblocca l'archivio prima di eliminare un profilo con password salvata.");
-        if (!Confirm("Eliminare il profilo Â«" + profile.Name + "Â»" + (profile.PasswordId.Length > 0 ? " e la relativa password salvata" : "") + "? Le chiavi SSH non vengono eliminate.")) throw new OperationCanceledException();
+        if (!Confirm("Eliminare il profilo «" + profile.Name + "»" + (profile.PasswordId.Length > 0 ? " e la relativa password salvata" : "") + "? Le chiavi SSH non vengono eliminate.")) throw new OperationCanceledException();
         var prior = data.Profiles; data.Profiles = data.Profiles.Where(p => p.Id != id).ToList();
         try { store.Save(data); } catch { data.Profiles = prior; throw; }
         if (profile.PasswordId.Length > 0 && vault.Passwords().Any(p => p.Id == profile.PasswordId))
         {
-            try { vault.Delete(profile.PasswordId); } catch (IOException) { Emit("notice", new { text = "Profilo eliminato. La password cifrata non Ã¨ stata rimossa dall'archivio a causa di un errore di scrittura." }); }
+            try { vault.Delete(profile.PasswordId); } catch (IOException) { Emit("notice", new { text = "Profilo eliminato. La password cifrata non è stata rimossa dall'archivio a causa di un errore di scrittura." }); }
         }
         connectionPasswords.Remove(id); connectionPassphrases.Remove(id); return Snapshot();
     }
@@ -32,7 +32,7 @@ public partial class MainWindow
         profile.PasswordId = remember ? old?.PasswordId ?? "" : "";
         if (remember && profile.PasswordId.Length == 0 && password.Length == 0) throw new ArgumentException("Inserisci la password da salvare nell'archivio.");
         if (!remember && !string.IsNullOrEmpty(old?.PasswordId) && !vault.IsUnlocked) throw new InvalidOperationException("Sblocca l'archivio prima di rimuovere la password salvata.");
-        if (!remember && !string.IsNullOrEmpty(old?.PasswordId) && !Confirm("Rimuovere dall'archivio la password salvata per Â«" + old.Name + "Â»?")) throw new OperationCanceledException();
+        if (!remember && !string.IsNullOrEmpty(old?.PasswordId) && !Confirm("Rimuovere dall'archivio la password salvata per «" + old.Name + "»?")) throw new OperationCanceledException();
         var candidate = JsonSerializer.Deserialize<AppData>(JsonSerializer.Serialize(data, ProfileStore.Json), ProfileStore.Json)!;
         profile.Folder = FolderCatalog.Add(candidate, profile.Folder);
         if (payload.TryGetProperty("addToAddressBook", out var add) && add.GetBoolean())
@@ -56,7 +56,7 @@ public partial class MainWindow
         if (old?.PasswordId.Length > 0 && old.PasswordId != profile.PasswordId && vault.IsUnlocked && vault.Passwords().Any(k => k.Id == old.PasswordId))
         {
             try { vault.Delete(old.PasswordId); }
-            catch (IOException) { Emit("notice", new { text = "Connessione salvata. La precedente password Ã¨ rimasta nell'archivio perchÃ© non Ã¨ stato possibile rimuoverla." }); }
+            catch (IOException) { Emit("notice", new { text = "Connessione salvata. La precedente password è rimasta nell'archivio perché non è stato possibile rimuoverla." }); }
         }
         if (!remember && password.Length > 0) connectionPasswords[profile.Id] = password; else if (remember) connectionPasswords.Remove(profile.Id);
         if (old?.KeyId != profile.KeyId || profile.Authentication is not ("key" or "auto")) connectionPassphrases.Remove(profile.Id);
@@ -68,12 +68,12 @@ public partial class MainWindow
         if (connectionPasswords.TryGetValue(profile.Id, out var temporary)) return temporary;
         if (profile.PasswordId.Length > 0)
         {
-            if (!vault.IsUnlocked) throw new InvalidOperationException("Sblocca l'archivio per usare la password salvata di Â«" + profile.Name + "Â».");
-            if (!vault.Passwords().Any(k => k.Id == profile.PasswordId)) throw new InvalidOperationException("La password salvata non Ã¨ piÃ¹ disponibile. Modifica la connessione.");
+            if (!vault.IsUnlocked) throw new InvalidOperationException("Sblocca l'archivio per usare la password salvata di «" + profile.Name + "».");
+            if (!vault.Passwords().Any(k => k.Id == profile.PasswordId)) throw new InvalidOperationException("La password salvata non è più disponibile. Modifica la connessione.");
             return vault.ReadPassword(profile.PasswordId);
         }
         if (automatic) throw new InvalidOperationException("Password richiesta: riconnetti manualmente.");
         if(profile.Storage.Browser && profile.Native.Kind=="s3")return Secret("Secret access key S3 / "+profile.Name,"Segreto per l'access key "+profile.Username+" del bucket "+profile.Storage.Bucket+". Non viene salvato automaticamente.");
-        return Secret("Password / " + profile.Name, "Password per " + profile.Username + "@" + profile.Host + ". Non verrÃ  salvata automaticamente.");
+        return Secret("Password / " + profile.Name, "Password per " + profile.Username + "@" + profile.Host + ". Non verrà salvata automaticamente.");
     }
 }

@@ -29,12 +29,12 @@ public static class ConnectionHooks
 }
 public sealed partial class SshSession
 {
-    public async Task RunRemoteHook(ConnectionHook hook)
+    public async Task RunRemoteHook(ConnectionHook hook,CancellationToken cancellation=default)
     {
         hook.Validate();if(!hook.Enabled||hook.Kind!="remote")return;
-        if(!_ssh.IsConnected){if(Profile.Protocol!="sftp")throw new IOException("Sessione SSH non disponibile per l’hook remoto.");await _ssh.ConnectAsync(CancellationToken.None);}
+        if(!_ssh.IsConnected){if(Profile.Protocol!="sftp")throw new IOException("Sessione SSH non disponibile per l’hook remoto.");await _ssh.ConnectAsync(cancellation);}
         using var command=_ssh.CreateCommand(hook.Command);command.CommandTimeout=TimeSpan.FromSeconds(hook.TimeoutSeconds);
-        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(hook.TimeoutSeconds));
+        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellation);timeout.CancelAfter(TimeSpan.FromSeconds(hook.TimeoutSeconds));
         async Task Drain(Stream stream){var buffer=new byte[4096];while(await stream.ReadAsync(buffer,timeout.Token)>0){} }
         var execution=command.ExecuteAsync(timeout.Token);await Task.WhenAll(execution,Drain(command.OutputStream),Drain(command.ExtendedOutputStream));
         if(command.ExitStatus!=0)throw new IOException("Hook remoto terminato con codice "+command.ExitStatus+".");

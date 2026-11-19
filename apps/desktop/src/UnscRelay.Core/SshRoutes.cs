@@ -26,18 +26,18 @@ public static class SshRoutes
         route.Reverse(); return route;
     }
     public static async Task<SshSession> CreateAsync(ConnectionProfile target, IReadOnlyCollection<ConnectionProfile> profiles,
-        Func<ConnectionProfile, string?, int, Task<SshSession>> create)
+        Func<ConnectionProfile, string?, int, Task<SshSession>> create,CancellationToken cancellation=default)
     {
         var route = Resolve(target, profiles); SshSession? transport = null;
         try
         {
             foreach (var profile in route)
             {
-                var port = transport?.ForwardTo(profile.Host, profile.Port) ?? 0;
+                cancellation.ThrowIfCancellationRequested();var port = transport?.ForwardTo(profile.Host, profile.Port) ?? 0;
                 var next = await create(profile, transport == null ? null : "127.0.0.1", port);
-                next.OwnRoute(transport); transport = next;
+                next.OwnRoute(transport); transport = next;cancellation.ThrowIfCancellationRequested();
                 if (profile == route[^1]) { var result = transport; transport = null; return result; }
-                await next.ConnectTransportAsync();
+                await next.ConnectTransportAsync(cancellation);
             }
             throw new InvalidOperationException("Percorso SSH vuoto.");
         }

@@ -21,9 +21,9 @@ internal sealed class InAppAccountBrowser(MainWindow owner,string directory,Acti
         var layout=new Grid{Margin=new Thickness(24),Background=new SolidColorBrush(Color.FromRgb(9,21,23))};
         layout.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});layout.RowDefinitions.Add(new RowDefinition());
         var header=new DockPanel{Margin=new Thickness(18,12,18,12)};
-        var close=new Button{Content="Annulla e torna a Relay",Padding=new Thickness(16,10,16,10),HorizontalAlignment=HorizontalAlignment.Right,MinHeight=44,Background=new SolidColorBrush(Color.FromRgb(190,210,146)),Foreground=Brushes.Black};
+        var close=new Button{Content=owner.NativeText("Annulla e torna a Relay"),Padding=new Thickness(16,10,16,10),HorizontalAlignment=HorizontalAlignment.Right,MinHeight=44,Background=new SolidColorBrush(Color.FromRgb(190,210,146)),Foreground=Brushes.Black};
         close.Click+=(_,_)=>done.TrySetResult(new BrowserResult{ResultType=BrowserResultType.UserCancel});DockPanel.SetDock(close,Dock.Right);header.Children.Add(close);
-        var title=new TextBlock{Text="UNSC RELAY  /  ACCOUNT PERSONALE",Foreground=new SolidColorBrush(Color.FromRgb(190,210,146)),VerticalAlignment=VerticalAlignment.Center,FontSize=17};header.Children.Add(title);
+        var title=new TextBlock{Text=owner.NativeText("UNSC RELAY  /  ACCOUNT PERSONALE"),Foreground=new SolidColorBrush(Color.FromRgb(190,210,146)),VerticalAlignment=VerticalAlignment.Center,FontSize=17};header.Children.Add(title);
         layout.Children.Add(header);var view=new WebView2{DefaultBackgroundColor=System.Drawing.Color.FromArgb(7,17,20)};Grid.SetRow(view,1);layout.Children.Add(view);
         var previousVisibility=owner.Browser.Visibility;
         // WebView2 uses a native child window: hide it while the identity view owns the surface.
@@ -43,7 +43,7 @@ internal sealed class InAppAccountBrowser(MainWindow owner,string directory,Acti
             core.ServerCertificateErrorDetected+=(_,e)=>e.Action=CoreWebView2ServerCertificateErrorAction.Cancel;
             core.NavigationStarting+=(_,e)=>{
                 if(DesktopAccountNavigation.IsCallback(e.Uri)){e.Cancel=true;done.TrySetResult(new BrowserResult{ResultType=BrowserResultType.Success,Response=e.Uri});return;}
-                if(!DesktopAccountNavigation.IsIdentityUrl(e.Uri)){e.Cancel=true;title.Text="Link esterno bloccato · resta nell’accesso UNSC";}
+                if(!DesktopAccountNavigation.IsIdentityUrl(e.Uri)){e.Cancel=true;title.Text=owner.NativeText("Link esterno bloccato · resta nell’accesso UNSC");}
             };
             core.NewWindowRequested+=(_,e)=>{e.Handled=true;if(DesktopAccountNavigation.IsIdentityUrl(e.Uri))core.Navigate(e.Uri);};
             core.NavigationCompleted+=(_,e)=>{if(!e.IsSuccess)done.TrySetResult(new BrowserResult{ResultType=BrowserResultType.UnknownError,Error="Non riesco a caricare la schermata di accesso. Riprova."});};

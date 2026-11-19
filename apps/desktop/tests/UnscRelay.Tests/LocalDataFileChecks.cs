@@ -36,6 +36,7 @@ internal static class LocalDataFileChecks
                 if (OperatingSystem.IsWindows()) Reject(() => File.WriteAllText(Path.Combine(data, "update-policy.json"), "tampered"), "opened metadata cannot change during verification");
             }
             Check(File.ReadAllText(sentinel) == "outside synthetic data" && Directory.GetFileSystemEntries(outside).Length == 1, "rejected links never modify external data");
+            var profiles=new ProfileStore(data);profiles.Save(new AppData());Check(profiles.Load().Profiles.Count==0,"profile store uses the bounded local metadata path");var profilePath=Path.Combine(data,"profiles.json");File.Delete(profilePath);File.CreateSymbolicLink(profilePath,sentinel);Reject(()=>profiles.Load(),"profile load refuses redirected metadata");Reject(()=>profiles.Save(new AppData()),"profile save cannot replace a redirected metadata target");Reject(()=>profiles.Import(profilePath,new AppData()),"configuration import refuses redirected external input");File.Delete(profilePath);using(var oversized=new FileStream(profilePath,FileMode.CreateNew)){oversized.SetLength(32L*1024*1024+1);}Reject(()=>profiles.Load(),"oversized saved configuration rejected before reading or parsing");Reject(()=>profiles.Import(profilePath,new AppData()),"oversized imported configuration rejected before allocation");Check(File.ReadAllText(sentinel)=="outside synthetic data","profile operations preserve redirected outside file");
             Console.WriteLine("Local data checks: " + count); return 0;
         }
         finally { root.Delete(true); }

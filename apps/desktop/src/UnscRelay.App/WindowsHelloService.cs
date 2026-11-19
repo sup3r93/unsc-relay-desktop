@@ -36,6 +36,14 @@ static class WindowsHelloService
         var result = await credential.RequestSignAsync(CryptographicBuffer.ConvertStringToBinary(message, BinaryStringEncoding.Utf8));
         Check(result.Status); CryptographicBuffer.CopyToByteArray(result.Result, out var signature); return signature;
     }
+    public static async Task DeleteIfMatchesAsync(WindowsHelloChallenge challenge)
+    {
+        ValidateKeyName(challenge.KeyName);var expected=Convert.FromBase64String(challenge.PublicKey);
+        var opened=await KeyCredentialManager.OpenAsync(challenge.KeyName);if(opened.Status==KeyCredentialStatus.NotFound)return;Check(opened.Status);
+        CryptographicBuffer.CopyToByteArray(opened.Credential.RetrievePublicKey(CryptographicPublicKeyBlobType.X509SubjectPublicKeyInfo),out var actual);
+        if(!CryptographicOperations.FixedTimeEquals(actual,expected))throw new CryptographicException("La chiave Windows Hello non corrisponde alla cancellazione dell’account.");
+        await KeyCredentialManager.DeleteAsync(challenge.KeyName);
+    }
     public static async Task DeleteAsync(string name) { ValidateKeyName(name); await KeyCredentialManager.DeleteAsync(name); }
     static void ValidateKeyName(string name)
     {

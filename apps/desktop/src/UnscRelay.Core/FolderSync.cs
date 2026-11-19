@@ -73,6 +73,6 @@ public static class FolderSync
     {
         CheckLocalParents(Path.GetDirectoryName(path)!);
         if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("File locale collegato non ammesso.");
-        using var stream = File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(stream));
+        using var stream = LocalDataFiles.OpenRead(Path.GetDirectoryName(Path.GetFullPath(path))!,Path.GetFileName(path),long.MaxValue); return Convert.ToHexString(SHA256.HashData(stream));
     }
 }

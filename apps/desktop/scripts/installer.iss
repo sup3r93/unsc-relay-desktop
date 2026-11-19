@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.2.18"
+  #define AppVersion "0.2.20"
 #endif
 [Setup]
 AppId={{A81436B5-2F6E-4354-8EE3-B38552B6A18C}
@@ -24,6 +24,8 @@ LZMANumBlockThreads=4
 SolidCompression=yes
 WizardStyle=modern dark polar includetitlebar
 WizardSizePercent=140
+WizardBackImageFile=installer-art\background.png
+WizardBackColor=#091312
 WizardImageFile=installer-art\wizard.png
 WizardSmallImageFile=installer-art\header.png
 WizardImageBackColor=$171409
@@ -39,22 +41,56 @@ AllowCancelDuringInstall=yes
 
 [Languages]
 Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "french"; MessagesFile: "compiler:Languages\French.isl"
+Name: "german"; MessagesFile: "compiler:Languages\German.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Messages]
-WelcomeLabel1=La tua console. Tutte le connessioni.
-WelcomeLabel2=Benvenuto in UNSC Relay {#AppVersion}.%n%nSSH, trasferimenti SFTP, editor remoto e desktop: un unico spazio di lavoro, anche su finestre separate.%n%nScegli la cartella del programma e completa la preparazione. Profili, archivio chiavi e impostazioni restano nei tuoi dati personali.
-FinishedHeadingLabel=UNSC Relay è pronto
-FinishedLabel=UNSC Relay {#AppVersion} è stato preparato sul PC.%n%nPremi Fine per aprire automaticamente la console. Il tuo archivio, le connessioni e le impostazioni restano nei dati personali.%n%nBuon lavoro, Comandante.
-ReadyLabel1=Pronto a preparare la console
-ReadyLabel2=Controlla il percorso prima di continuare. I file del programma saranno installati nella cartella indicata sotto.
-StatusLabel=Installazione di UNSC Relay…
+italian.WelcomeLabel1=La tua console. Tutte le connessioni.
+italian.WelcomeLabel2=Benvenuto in UNSC Relay {#AppVersion}.%n%nSSH, trasferimenti SFTP, editor remoto e desktop: un unico spazio di lavoro.%n%nScegli la cartella del programma. I dati personali restano separati dai file del programma.
+italian.FinishedHeadingLabel=UNSC Relay è pronto
+italian.FinishedLabel=UNSC Relay {#AppVersion} è stato preparato sul PC.%n%nPremi Fine per aprire la console.
+italian.ReadyLabel1=Pronto a preparare la console
+english.WelcomeLabel1=Your console. Every connection.
+english.WelcomeLabel2=Welcome to UNSC Relay {#AppVersion}.%n%nSSH, SFTP transfers, remote editing and desktops in one workspace.%n%nChoose the application folder. Your personal data stays separate from application files.
+english.FinishedHeadingLabel=UNSC Relay is ready
+english.FinishedLabel=UNSC Relay {#AppVersion} has been installed.%n%nSelect Finish to open the console.
+english.ReadyLabel1=Ready to set up your console
+french.WelcomeLabel1=Votre console. Toutes vos connexions.
+french.WelcomeLabel2=Bienvenue dans UNSC Relay {#AppVersion}.%n%nSSH, transferts SFTP, édition distante et bureaux réunis dans un espace de travail.%n%nChoisissez le dossier du programme. Vos données personnelles restent séparées des fichiers du programme.
+french.FinishedHeadingLabel=UNSC Relay est prêt
+french.FinishedLabel=UNSC Relay {#AppVersion} a été installé.%n%nCliquez sur Terminer pour ouvrir la console.
+french.ReadyLabel1=Prêt à préparer votre console
+german.WelcomeLabel1=Ihre Konsole. Alle Verbindungen.
+german.WelcomeLabel2=Willkommen bei UNSC Relay {#AppVersion}.%n%nSSH, SFTP-Übertragungen, Remote-Bearbeitung und Desktops in einem Arbeitsbereich.%n%nWählen Sie den Programmordner. Ihre persönlichen Daten bleiben von den Programmdateien getrennt.
+german.FinishedHeadingLabel=UNSC Relay ist bereit
+german.FinishedLabel=UNSC Relay {#AppVersion} wurde installiert.%n%nWählen Sie Fertigstellen, um die Konsole zu öffnen.
+german.ReadyLabel1=Bereit zur Einrichtung Ihrer Konsole
+spanish.WelcomeLabel1=Tu consola. Todas tus conexiones.
+spanish.WelcomeLabel2=Bienvenido a UNSC Relay {#AppVersion}.%n%nSSH, transferencias SFTP, edición remota y escritorios en un solo espacio de trabajo.%n%nElige la carpeta del programa. Tus datos personales permanecen separados de los archivos del programa.
+spanish.FinishedHeadingLabel=UNSC Relay está listo
+spanish.FinishedLabel=UNSC Relay {#AppVersion} se ha instalado.%n%nPulsa Finalizar para abrir la consola.
+spanish.ReadyLabel1=Todo listo para preparar tu consola
+
+[CustomMessages]
+italian.DesktopShortcut=Crea un collegamento sul desktop
+italian.OpenRelay=Avvia UNSC Relay
+english.DesktopShortcut=Create a desktop shortcut
+english.OpenRelay=Open UNSC Relay
+french.DesktopShortcut=Créer un raccourci sur le bureau
+french.OpenRelay=Ouvrir UNSC Relay
+german.DesktopShortcut=Desktopverknüpfung erstellen
+german.OpenRelay=UNSC Relay öffnen
+spanish.DesktopShortcut=Crear un acceso directo en el escritorio
+spanish.OpenRelay=Abrir UNSC Relay
 
 [LangOptions]
 DialogFontName=Segoe UI
 DialogFontSize=10
 
 [Tasks]
-Name: "desktopicon"; Description: "Crea un collegamento sul desktop"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:DesktopShortcut}"; Flags: unchecked
 
 [Files]
 Source: "..\src\UnscRelay.App\Assets\Relay.ico"; Flags: dontcopy
@@ -68,7 +104,7 @@ Name: "{group}\UNSC Relay"; Filename: "{app}\UNSC Relay.exe"
 Name: "{autodesktop}\UNSC Relay"; Filename: "{app}\UNSC Relay.exe"; Tasks: desktopicon; Check: DesktopShortcutNeedsCreation
 
 [Run]
-Filename: "{app}\UNSC Relay.exe"; Description: "Avvia UNSC Relay"; Flags: nowait runasoriginaluser
+Filename: "{app}\UNSC Relay.exe"; Description: "{cm:OpenRelay}"; Flags: nowait runasoriginaluser
 
 [Code]
 var MissionFooter: TNewStaticText;

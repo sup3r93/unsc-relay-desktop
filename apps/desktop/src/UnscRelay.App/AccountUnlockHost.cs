@@ -29,8 +29,8 @@ public partial class MainWindow
             }
             if(generation!=authenticationGeneration)throw new OperationCanceledException("La sessione è stata bloccata. Ripeti l’accesso.");
             if(existing==null||existing.Version<2)await Task.Run(()=>vault.MigrateAccountUnlock(AccountUnlocks,cloud.State.Owner,device,remote));
-            CompleteAppAuthentication(generation);
-        }catch{vault.Lock();throw;}
+            new WindowsHelloRegistration(dataPath).Remember(vault,cloud.State);CompleteAppAuthentication(generation);
+        }catch{LockVault();throw;}
         finally{if(remote!=null)CryptographicOperations.ZeroMemory(remote);}
     }
 }

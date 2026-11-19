@@ -7,16 +7,17 @@ function waitForApplicationLogin(){
  return new Promise(resolve=>{
   const gate=accessGate('IDENTIFICAZIONE RICHIESTA','La tua console. Le tue connessioni.');gate.classList.add('access-login');gate.removeAttribute('role');
   gate.prepend(createAccessScene());
-  const card=document.createElement('section');card.className='access-card';const kicker=document.createElement('small');kicker.textContent='FLEETCOM / IDENTITÀ LOCALE';const heading=document.createElement('h2');heading.textContent='Bentornato, Comandante.';const description=document.createElement('p');description.textContent='Accedi per sbloccare la console e il tuo archivio cifrato.';card.append(kicker,heading,description);
+  const card=document.createElement('section');card.className='access-card';const kicker=document.createElement('small');kicker.textContent=uiText('FLEETCOM / IDENTITÀ LOCALE');const heading=document.createElement('h2');heading.textContent=uiText('Bentornato, Comandante.');const description=document.createElement('p');description.textContent=uiText('Accedi per sbloccare la console e il tuo archivio cifrato.');card.append(kicker,heading,description);
   const status=document.createElement('p');status.className='access-error';status.setAttribute('role','status');status.setAttribute('aria-live','polite');const controls=[];
-  async function authenticate(method){if(controls.some(b=>b.disabled))return;controls.forEach(b=>b.disabled=true);status.textContent='Verifica in corso…';try{update(await rpc('applicationAuthenticate',{method}));if(state.appLocked)throw Error('Accesso non completato.');resolve()}catch(e){status.textContent=e.message||'Verifica non riuscita. Riprova.';controls.forEach(b=>b.disabled=false)}}
+  async function authenticate(method){if(controls.some(b=>b.disabled))return;controls.forEach(b=>b.disabled=true);status.textContent=uiText('Verifica in corso…');try{update(await rpc('applicationAuthenticate',{method}));if(state.appLocked)throw Error('Accesso non completato.');resolve()}catch(e){status.textContent=e.message||'Verifica non riuscita. Riprova.';controls.forEach(b=>b.disabled=false)}}
   const submit=button('',()=>authenticate('account'),'primary access-auth-button');submit.append(accessIcon('password'),'Accedi con il tuo account');card.append(submit);controls.push(submit);
-  const accountInfo=document.createElement('p');accountInfo.textContent='Online: email, password del tuo account e verifica a due fattori. L’accesso si completa nella schermata protetta di Relay.';card.append(accountInfo);
+  const accountInfo=document.createElement('p');accountInfo.textContent=uiText('Online: email, password del tuo account e verifica a due fattori. L’accesso si completa nella schermata protetta di Relay.');card.append(accountInfo);
   if(state.vault.windowsHello){const hello=button('',()=>authenticate('hello'),'access-auth-button');hello.append(accessIcon('hello'),'Accedi con Windows Hello');card.append(hello);controls.push(hello)}
   card.append(status);const info=document.createElement('p');info.className='access-footnote';info.textContent=state.vault.windowsHello?'Una verifica sblocca app e archivio. Windows Hello è stato abilitato manualmente su questo PC.':'Per accedere serve una connessione. Dopo l’accesso puoi abilitare manualmente Windows Hello per lavorare offline.';card.append(info);const exit=button('',()=>rpc('applicationExit'),'access-exit');exit.append(accessIcon('exit'),'Esci da Relay');card.append(accessUpdateButton(),exit);controls.push(exit);gate.append(card);submit.focus();
  });
 }
 async function finishApplicationStartup(){
+ await selectStartupAccount();
  const linkedNow=!!state.account?.requiresLink;
  if(linkedNow)await waitForAccountActivation();
  if(state.appLocked)await waitForApplicationLogin();
@@ -40,7 +41,7 @@ async function musicFade(audio,target){const initial=audio.volume,started=perfor
 function updateMusicButton(){const enabled=!!state?.data.settings.appMusicEnabled;const btn=$('music-btn');btn.setAttribute('aria-pressed',String(enabled));btn.title=enabled?'Disattiva musica dell’app':'Attiva musica dell’app';btn.querySelector('span').textContent=enabled?'Musica ON':'Musica OFF';}
 function stopAppMusic(){if(appMusic){appMusic.pause();appMusic.src='';appMusic=null}}
 function appMusicVolume(){const v=state?.data.settings.appMusicVolume;return Number.isFinite(v)?Math.max(0,Math.min(1,v)):.35}
-function startAppMusic(){updateMusicButton();if(!state?.data.settings.appMusicEnabled)return stopAppMusic();if(!appMusic)appMusic=backgroundTrack();appMusic.volume=appMusicVolume();appMusic.play().catch(()=>toast('Premi Musica per avviare la colonna sonora.',true));}
+function startAppMusic(){updateMusicButton();if(!state?.data.settings.appMusicEnabled)return stopAppMusic();if(!appMusic)appMusic=backgroundTrack();appMusic.volume=appMusicVolume();appMusic.play().catch(()=>toast(uiText('Premi Musica per avviare la colonna sonora.'),true));}
 function stopStartupTheme(){startupEnding=true;if(startupTheme){startupTheme.onended=null;startupTheme.pause();startupTheme.src='';startupTheme=null;}}
 async function fadeStartupTheme(){
  startupEnding=true;if(startupTrackKind==='fallback'&&startupTheme&&state.data.settings.appMusicEnabled){appMusic=startupTheme;startupTheme=null;await musicFade(appMusic,appMusicVolume());updateMusicButton();return;}

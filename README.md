@@ -8,14 +8,14 @@
 
 **The UNSC Relay source code and application were created by artificial intelligence (AI), based on the project owner’s requests and directions.**
 
-Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Stable version: **0.2.19**. See [release notes](apps/desktop/RELEASE-0.2.19.md).
+Windows desktop client for SSH/SFTP, RDP/VNC, local terminals, tunnels, file transfers, remote editing, macros and workspaces. UNSC-inspired interface. Stable version: **0.2.20**. See [release notes](apps/desktop/RELEASE-0.2.20.md).
 
 - `apps/desktop`: .NET solution, TypeScript/JavaScript interface, tests and installer.
 - `scripts`: build and release entry points from the repository root.
 - `main`: stable source, protected by review and additional checks.
 - `dev`: development and automated checks. No beta or prerelease distribution.
 
-The website, API and infrastructure are maintained separately by the owner. Initial app sign-in requires a personal account; website administrator accounts are not allowed. Online sign-in uses account 2FA; offline Windows Hello must be enabled manually for the selected account and PC.
+The website, API and infrastructure are maintained separately by the owner. Initial app sign-in requires an authorized account. Human administrators can use their own or explicitly shared archives; management remains website-only and their stronger authentication requirements remain enforced. Online sign-in uses account 2FA; offline Windows Hello must be enabled manually for the selected account and PC.
 
 Build with `dotnet build apps/desktop/UnscRelay.sln`. For UI tests, run `npm ci` and `npm test` in `apps/desktop` after installing the Playwright browser. [Development guide](apps/desktop/README.md) · [Contributing and branches](CONTRIBUTING.md) · [Security](SECURITY.md).
 
@@ -31,20 +31,22 @@ Dependency maintenance: Dependabot checks GitHub Actions, npm and NuGet weekly a
 
 This release adds remembered account selection, separate encrypted account workspaces, device-bound archive key sharing, owner-managed read/write permissions, readable modal notifications, accessible feature tabs, and configurable close-to-notification-area behavior. Update checks can run at startup and every 24 hours while the app remains open. Categories distinguish interface, features and security changes. Mandatory security requirements are accepted only from publisher-signed metadata bound to the installer version and SHA-256 digest. Critical requirements remain enforced offline after they have been verified. Existing clients gain this enforcement after installing a version that supports it.
 
+Version 0.2.20 adds saved-account selection and isolated workspaces, in-app account/security management, five interface languages (Italian, English, French, German and Spanish), encrypted shared archives with one owner, long recovery codes and local PDF export, verified plaintext export, delayed account deletion, private support tickets and compact notifications. Storage exploration includes explicit attachment deletion with owner/author checks and quota released only after verified destruction. Connection tools include native SFTP queues, external-editor synchronization, guided public-key installation, remote search/logs, presentation mode and resource controls. See the [release notes](apps/desktop/RELEASE-0.2.20.md) for scope and verification limits.
+
 ## Italiano
 
 **Le pull request della community devono essere dirette a `dev`. Solo il titolare può proporre modifiche a `main`.** [Guida ai contributi](CONTRIBUTING.md) · [Segnala un bug o proponi una funzionalità](https://github.com/sup3r93/unsc-relay-desktop/issues/new/choose)
 
 **Il codice e l’applicazione UNSC Relay sono stati realizzati da intelligenza artificiale (IA), sulla base delle richieste e delle indicazioni del titolare del progetto.**
 
-Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Versione stabile: **0.2.19**. Vedi le [note di rilascio](apps/desktop/RELEASE-0.2.19.md).
+Client desktop Windows per SSH/SFTP, RDP/VNC, terminali locali, tunnel, trasferimenti, editor remoto, macro e workspace. Interfaccia ispirata a UNSC. Versione stabile: **0.2.20**. Vedi le [note di rilascio](apps/desktop/RELEASE-0.2.20.md).
 
 - `apps/desktop`: soluzione .NET, interfaccia TypeScript/JavaScript, test e installer.
 - `scripts`: comandi di build e rilascio dalla radice.
 - `main`: codice stabile, protetto da revisione e controlli aggiuntivi.
 - `dev`: sviluppo e verifiche automatiche. Nessuna release beta o prerelease.
 
-Sito, API e infrastruttura sono mantenuti separatamente dal titolare. Il primo accesso dell’app richiede un account personale; gli account amministrativi del sito non sono ammessi. L’accesso online usa la 2FA dell’account; Windows Hello offline va abilitato manualmente per l’account e il PC selezionati.
+Sito, API e infrastruttura sono mantenuti separatamente dal titolare. Il primo accesso richiede un account abilitato; gli amministratori possono usare i propri archivi o quelli condivisi esplicitamente con verifica forte, mentre la gestione resta solo sul sito. L’accesso online usa la 2FA dell’account; Windows Hello offline va abilitato manualmente per l’account e il PC selezionati.
 
 Compilazione: `dotnet build apps/desktop/UnscRelay.sln`. Test UI: `npm ci` e `npm test` da `apps/desktop`, dopo aver installato il browser Playwright. [Guida di sviluppo](apps/desktop/README.md) · [Contributi e branch](CONTRIBUTING.md) · [Sicurezza](SECURITY.md).
 
@@ -59,3 +61,5 @@ Manutenzione dipendenze: Dependabot controlla GitHub Actions, npm e NuGet ogni s
 ### Versione 0.2.19
 
 Questa versione aggiunge selezione degli account ricordati, spazi cifrati separati per account, condivisione delle chiavi legata ai dispositivi, permessi di lettura/scrittura gestiti dal titolare, notifiche leggibili sulle finestre, schede funzionalità accessibili e chiusura configurabile nell’area di notifica. I controlli aggiornamenti possono avvenire all’avvio e ogni 24 ore mentre l’app resta aperta. Le categorie distinguono grafica, funzionalità e sicurezza. I requisiti obbligatori sono accettati soltanto da metadati firmati dal produttore, legati alla versione e al digest SHA-256 dell’installer. Dopo la verifica, i requisiti critici restano applicati anche offline. I client precedenti acquisiscono questo controllo installando una versione che lo supporta.
+
+La versione 0.2.20 aggiunge selezione degli account salvati e spazi separati, gestione integrata di account e sicurezza, cinque lingue, archivi condivisi cifrati con un solo titolare, codici di recupero lunghi con PDF locale, esportazione in chiaro verificata, cancellazione differita dell’account, assistenza privata e notifiche compatte. L’esplorazione spazio consente la cancellazione esplicita dei soli allegati di cui l’account è proprietario e autore; la quota si libera dopo la distruzione verificata. Sono inclusi coda SFTP nativa, sincronizzazione dell’editor esterno, installazione guidata delle chiavi pubbliche, ricerca e log remoti, modalità presentazione e controlli delle risorse. Ambito e limiti sono nelle note di rilascio.

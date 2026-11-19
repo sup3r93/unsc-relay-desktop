@@ -100,11 +100,11 @@ public sealed class NativeControlSession : IAsyncDisposable
         }
         catch{try{if(!process.HasExited)process.Kill(true);}catch(InvalidOperationException){}throw;}
     }
-    public async Task RunRemoteHook(ConnectionHook hook)
+    public async Task RunRemoteHook(ConnectionHook hook,CancellationToken cancellation=default)
     {
         hook.Validate();if(!hook.Enabled||hook.Kind!="remote")return;
         // -O proxy fails if the owned socket is gone: no new transport or authentication.
-        var code=await Run(ProxyArguments.Concat([hook.Command]),hook.TimeoutSeconds,CancellationToken.None);
+        var code=await Run(ProxyArguments.Concat([hook.Command]),hook.TimeoutSeconds,cancellation);
         if(code!=0)throw new IOException("Hook remoto OpenSSH terminato con codice "+code+".");
     }
     public async ValueTask DisposeAsync()

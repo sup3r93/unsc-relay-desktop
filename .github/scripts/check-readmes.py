@@ -5,6 +5,6 @@ errors=[]
 for name in paths:
  if name and Path(name).name.lower().startswith('readme') and Path(name).suffix.lower() in {'.md','.txt',''}:
   value=Path(name).read_text(encoding='utf-8-sig')
-  if '## Italiano' not in value or '## English' not in value:errors.append(name)
-if errors:raise SystemExit('Missing Italian/English README sections: '+', '.join(errors))
-print('All project README files include Italian and English.')
+  if '## Italiano' not in value or '## English' not in value or value.index('## English')>value.index('## Italiano'):errors.append(name)
+if errors:raise SystemExit('README requires English first, followed by Italian: '+', '.join(errors))
+print('All project README files include English first, followed by Italian.')

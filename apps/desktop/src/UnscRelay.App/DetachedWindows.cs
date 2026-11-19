@@ -23,14 +23,14 @@ public partial class MainWindow
     async void OpenDetachedWindow(object? sender,CoreWebView2NewWindowRequestedEventArgs e)
     {
         e.Handled=true;
-        if(!Uri.TryCreate(e.Uri,UriKind.Absolute,out var uri)||uri.GetLeftPart(UriPartial.Path)!=Origin+"/detached.html"||!Guid.TryParse(uri.Fragment.TrimStart('#'),out _)||detachedWindows.Count>=10||CriticalUpdateRequired||closing||updating)return;
+        if(!Uri.TryCreate(e.Uri,UriKind.Absolute,out var uri)||uri.GetLeftPart(UriPartial.Path)!=Origin+"/detached.html"||!Guid.TryParse(uri.Fragment.TrimStart('#'),out _)||detachedWindows.Count>=10||nativePresentationMode||CriticalUpdateRequired||closing||updating)return;
         var id=uri.Fragment.TrimStart('#');if(detachedWindows.ContainsKey(id))return;
         using var deferral=e.GetDeferral();var window=new DetachedWindow();detachedWindows.Add(id,window);
         try
         {
             var restored=pendingWindowPlacements.Remove(id,out var pendingPlacement)&&pendingPlacement.Expires>DateTime.UtcNow;
             if(restored)window.WindowStartupLocation=WindowStartupLocation.Manual;
-            window.Show();if(restored&&WorkspaceWindowPosition.Apply(window,pendingPlacement.Placement))Emit("notice",new{text="Monitor del workspace non disponibile: finestra riportata su un monitor collegato."});await window.Browser.EnsureCoreWebView2Async(Browser.CoreWebView2.Environment);var core=window.Browser.CoreWebView2;
+            window.Show();if(restored&&WorkspaceWindowPosition.Apply(window,pendingPlacement.Placement))Emit("notice",new{text="Monitor del workspace non disponibile: finestra riportata su un monitor collegato."});await window.Browser.EnsureCoreWebView2Async(Browser.CoreWebView2.Environment);var core=window.Browser.CoreWebView2;if(nativePresentationMode){presentationHiddenWindows.Add(id);window.Hide();window.DesktopLayer.Visibility=Visibility.Collapsed;}
             core.SetVirtualHostNameToFolderMapping("relay.local",Path.Combine(AppContext.BaseDirectory,"Web"),CoreWebView2HostResourceAccessKind.DenyCors);
             core.Settings.AreDevToolsEnabled=false;core.Settings.AreDefaultContextMenusEnabled=false;core.Settings.AreHostObjectsAllowed=false;core.Settings.IsPasswordAutosaveEnabled=false;core.Settings.IsGeneralAutofillEnabled=false;
             core.NewWindowRequested+=(_,args)=>args.Handled=true;core.PermissionRequested+=(_,args)=>args.State=CoreWebView2PermissionState.Deny;
@@ -50,7 +50,7 @@ public partial class MainWindow
     {
         if(action=="activateMain"){if(WindowState==WindowState.Minimized)WindowState=WindowState.Maximized;Activate();return null;}
         if(!detachedWindows.TryGetValue(S(payload,"id"),out var window))return null;
-        if(action=="detachedFocus"){if(window.WindowState==WindowState.Minimized)window.WindowState=WindowState.Normal;window.Activate();}
+        if(action=="detachedFocus"&&!nativePresentationMode){if(window.WindowState==WindowState.Minimized)window.WindowState=WindowState.Normal;window.Activate();}
         if(action=="detachedClose")window.Close();return null;
     }
     void CloseDetachedWindows(){foreach(var window in detachedWindows.Values.ToArray()){window.PermitClose=true;window.Close();}detachedWindows.Clear();}

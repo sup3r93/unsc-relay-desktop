@@ -1,6 +1,8 @@
 account-browser-checks.json
 account-browser.png
 aspnetcorev2_inprocess.dll
+erasure-verification-smoke.png
+exit-review-smoke.png
 Fido2.dll
 Fido2.Models.dll
 libsodium.dll
@@ -145,6 +147,7 @@ Microsoft.IdentityModel.Tokens.dll
 Microsoft.JSInterop.dll
 Microsoft.Net.Http.Headers.dll
 NSec.Cryptography.dll
+permission-report-smoke.pdf
 System.Formats.Cbor.dll
 System.Threading.RateLimiting.dll
 Tools\Cygwin\usr\lib\csih\getAccountName.exe

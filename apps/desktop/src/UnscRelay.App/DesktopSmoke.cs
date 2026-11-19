@@ -58,12 +58,12 @@ public partial class MainWindow
                 var settings = rdp.EndpointSettings();
                 checks["rdpEmbeddedMultimonitorResetsForSingleMonitor"] = !rdp.MultiMonitorEnabled;
                 checks["rdpLoopbackEndpointPreservesNlaAndCertificateVerification"] = settings.Host == "127.0.0.1" && settings.Port == 49321 && settings.Nla && settings.Authentication == 2;
-                var refusedListener = new TcpListener(IPAddress.Loopback, 0); refusedListener.Start(); var refusedPort = ((IPEndPoint)refusedListener.LocalEndpoint).Port; refusedListener.Stop();
+                using var refusedListener = new TcpListener(IPAddress.Loopback, 0); refusedListener.Start(); var refusedPort = ((IPEndPoint)refusedListener.LocalEndpoint).Port; refusedListener.Stop();
                 rdp.Connect(new ConnectionProfile { Protocol = "rdp", Host = "127.0.0.1", Username = "fixture", Port = refusedPort, Authentication = "password", ConnectTimeoutSeconds = 5 }, "NOT-A-REAL-PASSWORD", 800, 600);
                 await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(12)); checks["rdpRefusedConnectionReportsStatus"] = true;
                 DesktopLayer.Children.Remove(host);
             }
-            var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var source = new FixtureFramebuffer();
+            using var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); var source = new FixtureFramebuffer();
             var server = new VncServerSession(); server.PasswordProvided += (_, args) => args.Accept("fixture".ToCharArray()); server.SetFramebufferSource(source);
             try
             {
