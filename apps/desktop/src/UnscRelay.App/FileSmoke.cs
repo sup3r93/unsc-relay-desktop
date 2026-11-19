@@ -12,7 +12,7 @@ public partial class MainWindow
         try
         {
             fileJobs.Clear(); EmitQueue();
-            var root = Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT") ?? throw new IOException("Fixture missing");
+            var root = SmokeFixturePaths.Root(Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT") ?? throw new IOException("Fixture missing"));
             var profile = new ConnectionProfile { Id = "files-native-smoke", Name = "Files fixture", Host = "127.0.0.1", Port = int.Parse(Environment.GetEnvironmentVariable("RELAY_FILE_PORT")!), Username = "test", Protocol = "sftp", Authentication = "password" };
             SaveConnectionProfile(P(new { profile.Id, profile.Name, profile.Host, profile.Port, profile.Username, profile.Protocol, profile.Authentication, addToAddressBook = true, machineName = "Native loopback" }));
             await FileAction("machineSave",P(new {id="manual-address-fixture",name="Manual address",host="192.0.2.200",port=2222}));

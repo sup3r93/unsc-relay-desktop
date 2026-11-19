@@ -79,8 +79,7 @@ public partial class MainWindow
             checks["introHasNativeCover"]=StartupCover!=null;
             var geometry=await Browser.CoreWebView2.ExecuteScriptAsync("({loaded:typeof accessSettingsDialog==='function',hidden:!document.body.classList.contains('startup-covered')})");checks["accessUiLoaded"]=geometry.Contains("true");
             if(Environment.GetEnvironmentVariable("RELAY_FILE_PORT") is string portText){
-                var fixture=Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT")!;
-                if(!Path.GetFullPath(fixture).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase))throw new IOException("Fixture non valida.");
+                var fixture=SmokeFixturePaths.Root(Environment.GetEnvironmentVariable("RELAY_FIXTURE_ROOT")??throw new IOException("Fixture missing"));
                 vault.Unlock(master);data.Settings=data.Settings with{AssistantApiEnabled=true};
                 var profile2=new ConnectionProfile{Name="API loopback",Host="127.0.0.1",Port=int.Parse(portText),Username="test",Authentication="password",PasswordId=vault.StorePassword("API fixture","relay-test-password"),StartupMacro=new("fixture","Fixture macro","echo MACRO-FIXTURE",[],true,false)};data.Profiles=[profile2];
                 var host=NativeIdentity.Parse(Environment.GetEnvironmentVariable("RELAY_FIXTURE_HOST_PUBLIC")!);hosts.Accept(new(profile2.Host,profile2.Port,host.Algorithm,host.Fingerprint[7..],DateTime.UtcNow,host.PublicKey));

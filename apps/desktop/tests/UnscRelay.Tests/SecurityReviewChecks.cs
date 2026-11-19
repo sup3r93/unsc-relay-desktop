@@ -11,6 +11,19 @@ static class SecurityReviewChecks
         void Reject(Action action, string name) { try { action(); } catch (IOException) { Check(true, name); return; } throw new Exception("Accepted " + name); }
         try
         {
+            var smokeFixture = Directory.CreateTempSubdirectory("relay-ssh-");
+            try
+            {
+                Check(SmokeFixturePaths.Root(smokeFixture.FullName) == smokeFixture.FullName, "Smoke smokeFixture accepts only its existing temporary child");
+                Reject(() => SmokeFixturePaths.Root(root.FullName), "Unrelated temporary data cannot become a smoke smokeFixture");
+                Reject(() => SmokeFixturePaths.Root(Path.Combine(root.FullName, "relay-ssh-nested")), "Nested smokeFixture names cannot select another root");
+                Reject(() => SmokeFixturePaths.Root(Path.Combine(smokeFixture.FullName, "..", smokeFixture.Name)), "Traversal cannot select a smokeFixture sibling");
+                Reject(() => SmokeFixturePaths.Root(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) + "-sibling" + Path.DirectorySeparatorChar + "relay-ssh-outside"), "Temporary-prefix sibling is outside smokeFixture boundary");
+                var socket = NativeAgent.SocketForHome(root.FullName);
+                Check(socket.StartsWith(Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && Path.GetFileName(socket).EndsWith(".sock", StringComparison.Ordinal), "Native socket remains a checked temporary child");
+                Check(socket == NativeAgent.SocketForHome(root.FullName) && socket != NativeAgent.SocketForHome(smokeFixture.FullName), "Native socket name remains stable and workspace-specific");
+            }
+            finally { smokeFixture.Delete(); }
             foreach (var name in new[] { "CON", "NUL.txt", "--user-data-dir=evil", "-script", "..", "a:stream", "x.", "x ", "a\0b", new string('a', 200) })
             {
                 var copy = ExternalEditorFile.CopyName("/remote/" + name);
