@@ -41,7 +41,7 @@ public sealed partial class SshSession
     }
     public Task<string> CanonicalDirectoryAsync(string path) => Task.Run(() =>
     {
-        _files.Wait(); try { var full = _sftp.Get(path).FullName; if (!_sftp.GetAttributes(full).IsDirectory) throw new IOException("Il percorso non Ã¨ una cartella."); return full; } finally { _files.Release(); }
+        _files.Wait(); try { var full = _sftp.Get(path).FullName; if (!_sftp.GetAttributes(full).IsDirectory) throw new IOException("Il percorso non è una cartella."); return full; } finally { _files.Release(); }
     });
     public async Task<FileStamp?> StatAsync(string path)
     {
@@ -49,17 +49,17 @@ public sealed partial class SshSession
         try { return await Task.Run(() => { if (!_sftp.Exists(path)) return null; var a = _sftp.GetAttributes(path); return new FileStamp(path, a.IsDirectory, a.Size, a.LastWriteTimeUtc); }); }
         finally { _files.Release(); }
     }
-    public async Task FileOperationAsync(string operation, string path, string value)
+    public async Task FileOperationAsync(string operation, string path, string value,CancellationToken cancellation=default,Action? beforeChange=null)
     {
-        await _files.WaitAsync();
+        await _files.WaitAsync(cancellation);
         try { await Task.Run(() =>
         {
-            switch (operation)
+            cancellation.ThrowIfCancellationRequested();beforeChange?.Invoke();switch (operation)
             {
                 case "mkdir": _sftp.CreateDirectory(path); break;
                 case "rename": _sftp.RenameFile(path, value); break;
                 case "delete": if (_sftp.GetAttributes(path).IsDirectory) _sftp.DeleteDirectory(path); else _sftp.DeleteFile(path); break;
-                case "chmod": if (!System.Text.RegularExpressions.Regex.IsMatch(value, "^[0-7]{3,4}$")) throw new ArgumentException("Permessi ottali non validi."); _sftp.ChangePermissions(path, Convert.ToInt16(value, 8)); break;
+                case "chmod": _sftp.ChangePermissions(path,SftpPermissions.Parse(value)); break;
                 default: throw new ArgumentException("Operazione file non valida.");
             }
         }); } finally { _files.Release(); }
@@ -69,9 +69,9 @@ public sealed partial class SshSession
         using var channel = await FileChannel(CancellationToken.None);
         return await Task.Run(() =>
         {
-            var attributes = channel.GetAttributes(path); if (!attributes.IsRegularFile || attributes.Size > 2 * 1024 * 1024) throw new IOException("Lâ€™editor accetta file di testo UTF-8 fino a 2 MiB.");
+            var attributes = channel.GetAttributes(path); if (!attributes.IsRegularFile || attributes.Size > 2 * 1024 * 1024) throw new IOException("L’editor accetta file di testo UTF-8 fino a 2 MiB.");
             using var stream = channel.OpenRead(path); using var bytes = new MemoryStream(); var buffer = new byte[65536]; int read;
-            while ((read = stream.Read(buffer)) > 0) { if (bytes.Length + read > 2 * 1024 * 1024) throw new IOException("File troppo grande per lâ€™editor."); bytes.Write(buffer, 0, read); }
+            while ((read = stream.Read(buffer)) > 0) { if (bytes.Length + read > 2 * 1024 * 1024) throw new IOException("File troppo grande per l’editor."); bytes.Write(buffer, 0, read); }
             var content = bytes.ToArray(); if (content.Contains((byte)0)) throw new IOException("Il file contiene dati binari.");
             var bom = content.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf });
             var text = new UTF8Encoding(false, true).GetString(content, bom ? 3 : 0, content.Length - (bom ? 3 : 0));
@@ -86,7 +86,9 @@ public sealed partial class SshSession
     }
     public async Task<bool> TransferAdvancedAsync(TransferRequest request, Action<ulong, long> progress, CancellationToken cancellation, Action<TransferCheckpoint>? checkpointObserved = null)
     {
+        if(request.Permissions is{} permissions)SftpPermissions.Validate(permissions);
         if (!Guid.TryParse(request.Id, out _)) throw new ArgumentException("Identificatore trasferimento non valido.");
+        if(request.ExpectedSourceHash is {} expected&&(expected.Length!=64||!expected.All(char.IsAsciiHexDigit)))throw new ArgumentException("Impronta della sorgente non valida.");
         TransferWindow.Validate(request.WindowStartMinute,request.WindowEndMinute);
         await Task.Run(()=>TransferWindow.Wait(request.WindowStartMinute,request.WindowEndMinute,cancellation),cancellation);
         if (request.BandwidthKiB is < 0 or > 1048576) throw new ArgumentException("Limite banda non valido.");
@@ -109,15 +111,18 @@ public sealed partial class SshSession
             }
             var exists = request.Upload ? channel.Exists(remote) : File.Exists(local);
             if (exists && request.Conflict == "skip") return false;
-            if (exists && request.Conflict is "ask" or "new") throw new IOException("La destinazione esiste giÃ . Scegli Sostituisci oppure un altro nome.");
+            if (exists && request.Conflict is "ask" or "new") throw new IOException("La destinazione esiste già. Scegli Sostituisci oppure un altro nome.");
             if (request.Upload && channel.GetAttributes(Path.GetDirectoryName(remote.Replace('/', Path.DirectorySeparatorChar))?.Replace(Path.DirectorySeparatorChar, '/') ?? ".").IsDirectory == false) throw new IOException("Cartella remota non valida.");
             var partial = request.Upload ? remote + ".relay-" + request.Id + ".partial" : local + ".relay-" + request.Id + ".partial";
-            var size = request.Upload ? new FileInfo(local).Length : channel.GetAttributes(remote).Size;
+            // The source stays on one verified, non-replaceable handle from preflight to transfer.
+            // A comparison mismatch must be rejected before opening any remote partial for writing.
+            using Stream source = request.Upload ? LocalDataFiles.OpenRead(Path.GetDirectoryName(local)!,Path.GetFileName(local),request.MaximumSourceBytes) : channel.OpenRead(remote);
+            var size=source.Length;
             if(size>request.MaximumSourceBytes||request.MaximumSourceBytes<0)throw new IOException("La sorgente supera il limite di questa operazione.");
-            var time = request.Upload ? File.GetLastWriteTimeUtc(local) : channel.GetAttributes(remote).LastWriteTimeUtc;
-            using Stream source = request.Upload ? new FileStream(local, FileMode.Open, FileAccess.Read, FileShare.Read) : channel.OpenRead(remote);
-            var verifyContent=checkpointObserved!=null||request.Checkpoint?.Source.Hash!=null;
-            string? sourceHash=null;if(verifyContent){sourceHash=CheckpointHash(source,cancellation);source.Position=0;}
+            var time=request.Upload?File.GetLastWriteTimeUtc(((FileStream)source).SafeFileHandle):channel.GetAttributes(remote).LastWriteTimeUtc;
+            var verifyContent=checkpointObserved!=null||request.Checkpoint?.Source.Hash!=null||request.ExpectedSourceHash!=null;
+            string? sourceHash=null;if(verifyContent){sourceHash=CheckpointHash(source,cancellation,request.MaximumSourceBytes);source.Position=0;}
+            if(request.ExpectedSourceHash!=null&&!string.Equals(sourceHash,request.ExpectedSourceHash,StringComparison.OrdinalIgnoreCase))throw new IOException("La sorgente è cambiata dal confronto. Nessun contenuto è stato inviato alla destinazione.");
             TransferFileVersion? targetVersion=null;
             if(exists){if(request.Upload){var target=channel.GetAttributes(remote);using var targetStream=channel.OpenRead(remote);targetVersion=new(target.Size,target.LastWriteTimeUtc,verifyContent?CheckpointHash(targetStream,cancellation):null);}else{var target=new FileInfo(local);using var targetStream=File.OpenRead(local);targetVersion=new(target.Length,target.LastWriteTimeUtc,verifyContent?CheckpointHash(targetStream,cancellation):null);}}
             var checkpoint=new TransferCheckpoint(new(size,time,sourceHash),targetVersion);
@@ -125,7 +130,7 @@ public sealed partial class SshSession
             checkpointObserved?.Invoke(request.Checkpoint ?? checkpoint);
             lock (_transferSources)
             {
-                if (request.Resume && _transferSources.TryGetValue(request.Id, out var original) && original != (size, time)) throw new IOException("La sorgente Ã¨ cambiata: ripresa rifiutata. Avvia un nuovo trasferimento.");
+                if (request.Resume && _transferSources.TryGetValue(request.Id, out var original) && original != (size, time)) throw new IOException("La sorgente è cambiata: ripresa rifiutata. Avvia un nuovo trasferimento.");
                 _transferSources[request.Id] = (size, time);
             }
             var partialExists = request.Upload ? channel.Exists(partial) : File.Exists(partial);
@@ -134,18 +139,18 @@ public sealed partial class SshSession
             {
                 using Stream prefix = request.Upload ? channel.OpenRead(partial) : new FileStream(partial, FileMode.Open, FileAccess.Read, FileShare.Read);
                 offset = prefix.Length;
-                if (offset > size) throw new IOException("File parziale piÃ¹ grande della sorgente: ripresa rifiutata.");
+                if (offset > size) throw new IOException("File parziale più grande della sorgente: ripresa rifiutata.");
                 VerifyPrefix(source, prefix, offset, cancellation);
             }
             else if (exists && request.Conflict == "resume")
             {
                 using Stream prefix = request.Upload ? channel.OpenRead(remote) : new FileStream(local, FileMode.Open, FileAccess.Read, FileShare.Read);
                 offset = prefix.Length;
-                if (offset > size) throw new IOException("La destinazione Ã¨ piÃ¹ grande della sorgente: ripresa rifiutata.");
+                if (offset > size) throw new IOException("La destinazione è più grande della sorgente: ripresa rifiutata.");
                 VerifyPrefix(source, prefix, offset, cancellation); prefix.Position = 0;
                 using Stream stage = request.Upload ? channel.Open(partial, FileMode.Create, FileAccess.Write) : new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None);
                 var copyBuffer = new byte[65536]; long copied = 0;
-                while (copied < offset) { cancellation.ThrowIfCancellationRequested(); var n = prefix.Read(copyBuffer, 0, (int)Math.Min(copyBuffer.Length, offset - copied)); if (n == 0) throw new IOException("La destinazione Ã¨ cambiata durante la verifica."); stage.Write(copyBuffer, 0, n); copied += n; }
+                while (copied < offset) { cancellation.ThrowIfCancellationRequested(); var n = prefix.Read(copyBuffer, 0, (int)Math.Min(copyBuffer.Length, offset - copied)); if (n == 0) throw new IOException("La destinazione è cambiata durante la verifica."); stage.Write(copyBuffer, 0, n); copied += n; }
                 stage.Flush();
             }
             using (Stream destination = request.Upload ? channel.Open(partial, offset > 0 ? FileMode.Open : FileMode.Create, FileAccess.Write) : new FileStream(partial, offset > 0 ? FileMode.Open : FileMode.Create, FileAccess.Write, FileShare.None))
@@ -168,12 +173,12 @@ public sealed partial class SshSession
             if (request.ExpectedSourceHash != null || sourceHash!=null)
             {
                 using Stream staged = request.Upload ? channel.OpenRead(partial) : File.OpenRead(partial);
-                if (CheckpointHash(staged,cancellation) != (request.ExpectedSourceHash ?? sourceHash)) throw new IOException("La sorgente Ã¨ cambiata dal confronto. Ripeti lâ€™anteprima.");
+                if (!string.Equals(CheckpointHash(staged,cancellation),request.ExpectedSourceHash ?? sourceHash,StringComparison.OrdinalIgnoreCase)) throw new IOException("La sorgente è cambiata dal confronto. Ripeti l’anteprima.");
                 if (request.Upload ? channel.Exists(remote) && channel.Get(remote).IsSymbolicLink : File.Exists(local) && File.GetAttributes(local).HasFlag(FileAttributes.ReparsePoint)) throw new IOException("Destinazione collegata non ammessa.");
                 FolderSync.CheckLocalParents(Path.GetDirectoryName(local)!);
             }
-            if (request.ExpectedMissingTarget && (request.Upload ? channel.Exists(remote) : File.Exists(local) || System.IO.Directory.Exists(local))) throw new IOException("La destinazione Ã¨ comparsa dopo il confronto. Ripeti lâ€™anteprima.");
-            if ((request.Upload ? File.GetLastWriteTimeUtc(local) : channel.GetAttributes(remote).LastWriteTimeUtc) != time || (request.Upload ? new FileInfo(local).Length : channel.GetAttributes(remote).Size) != size) throw new IOException("La sorgente Ã¨ cambiata durante il trasferimento. Destinazione originale conservata.");
+            if (request.ExpectedMissingTarget && (request.Upload ? channel.Exists(remote) : File.Exists(local) || System.IO.Directory.Exists(local))) throw new IOException("La destinazione è comparsa dopo il confronto. Ripeti l’anteprima.");
+            if ((request.Upload ? File.GetLastWriteTimeUtc(((FileStream)source).SafeFileHandle) : channel.GetAttributes(remote).LastWriteTimeUtc) != time || source.Length != size) throw new IOException("La sorgente è cambiata durante il trasferimento. Destinazione originale conservata.");
             if(verifyContent || request.Resume && request.Checkpoint!=null)
             {
                 TransferFileVersion? targetNow=null;
@@ -184,20 +189,20 @@ public sealed partial class SshSession
             {
                 if (request.ExpectedHash != null)
                 {
-                    if (!channel.Exists(remote)) throw new IOException("CONFLITTO: il file remoto Ã¨ stato rimosso.");
+                    if (!channel.Exists(remote)) throw new IOException("CONFLITTO: il file remoto è stato rimosso.");
                     using var original = channel.OpenRead(remote);
-                    if (Convert.ToHexString(SHA256.HashData(original)) != request.ExpectedHash) throw new IOException("CONFLITTO: il file remoto Ã¨ cambiato. Ricaricalo prima di salvare.");
+                    if (Convert.ToHexString(SHA256.HashData(original)) != request.ExpectedHash) throw new IOException("CONFLITTO: il file remoto è cambiato. Ricaricalo prima di salvare.");
                 }
                 if (request.Permissions is { } mode) channel.ChangePermissions(partial, mode);
                 else if (exists) { var attr = channel.GetAttributes(remote); var own = channel.GetAttributes(partial); own.OwnerCanRead = attr.OwnerCanRead; own.OwnerCanWrite = attr.OwnerCanWrite; own.OwnerCanExecute = attr.OwnerCanExecute; own.GroupCanRead = attr.GroupCanRead; own.GroupCanWrite = attr.GroupCanWrite; own.GroupCanExecute = attr.GroupCanExecute; own.OthersCanRead = attr.OthersCanRead; own.OthersCanWrite = attr.OthersCanWrite; own.OthersCanExecute = attr.OthersCanExecute; channel.SetAttributes(partial, own); }
                 // No delete fallback: an unsupported atomic replace must preserve the original.
                 var nowExists = channel.Exists(remote);
-                if (nowExists && request.Conflict is not ("replace" or "resume")) throw new IOException("La destinazione Ã¨ comparsa durante il trasferimento. File originale conservato.");
+                if (nowExists && request.Conflict is not ("replace" or "resume")) throw new IOException("La destinazione è comparsa durante il trasferimento. File originale conservato.");
                 channel.RenameFile(partial, remote, nowExists);
             }
             else
             {
-                if (request.ExpectedHash != null && (!File.Exists(local) || FolderSync.HashLocal(local) != request.ExpectedHash)) throw new IOException("CONFLITTO: il file locale Ã¨ cambiato dal confronto.");
+                if (request.ExpectedHash != null && (!File.Exists(local) || FolderSync.HashLocal(local) != request.ExpectedHash)) throw new IOException("CONFLITTO: il file locale è cambiato dal confronto.");
                 File.Move(partial, local, request.Conflict is "replace" or "resume");
             }
             lock (_transferSources) _transferSources.Remove(request.Id);
@@ -213,10 +218,10 @@ public sealed partial class SshSession
         if (request.Upload) { using var channel = await FileChannel(CancellationToken.None); await Task.Run(() => { if (channel.Exists(path)) channel.DeleteFile(path); }); }
         else if (File.Exists(path)) File.Delete(path);
     }
-    static string CheckpointHash(Stream stream,CancellationToken cancellation)
+    static string CheckpointHash(Stream stream,CancellationToken cancellation,long maximumBytes=long.MaxValue)
     {
-        using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);var buffer=new byte[65536];int count;
-        while((count=stream.Read(buffer,0,buffer.Length))>0){cancellation.ThrowIfCancellationRequested();hash.AppendData(buffer,0,count);}return Convert.ToHexString(hash.GetHashAndReset());
+        using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);var buffer=new byte[65536];int count;long total=0;
+        try{while((count=stream.Read(buffer,0,buffer.Length))>0){cancellation.ThrowIfCancellationRequested();if(count>maximumBytes-total)throw new IOException("La sorgente supera il limite di questa operazione.");total+=count;hash.AppendData(buffer,0,count);}return Convert.ToHexString(hash.GetHashAndReset());}finally{CryptographicOperations.ZeroMemory(buffer);}
     }
     static void EnsureRemoteDirectory(SftpClient channel, string path)
     {

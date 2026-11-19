@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\UnscRelay.Core\UnscRelay.Core.csproj" />
@@ -11,4 +11,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup><None Include="../fixtures/legacy-web-export.json" Link="fixtures/legacy-web-export.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Include="../fixtures/erasure-receipt-contract.json" Link="fixtures/erasure-receipt-contract.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Include="../../src/UnscRelay.App/Web/interface.json" Link="fixtures/interface.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

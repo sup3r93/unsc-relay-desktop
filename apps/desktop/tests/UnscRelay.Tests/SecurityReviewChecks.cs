@@ -81,6 +81,11 @@ static class SecurityReviewChecks
             }
             var connection = new Renci.SshNet.ConnectionInfo("fixture.invalid", "fixture", new Renci.SshNet.PasswordAuthenticationMethod("fixture", "fixture"));
             Check(!connection.Encryptions.Keys.Any(name => name.Contains("ecb", StringComparison.OrdinalIgnoreCase)), "SSH transport does not offer an ECB cipher");
+            var profile=new ConnectionProfile{Host="fixture.invalid",Username="fixture",Authentication="password"};using(var session=new SshSession(profile,"synthetic-fixture-only",null,"",new HostKeyStore(Path.Combine(root.FullName,"cipher-hosts.json")),_=>false,_=>"")){
+                object Field(string name)=>typeof(SshSession).GetField(name,System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.GetValue(session)!;
+                var ssh=(Renci.SshNet.SshClient)Field("_ssh");var sftp=(Renci.SshNet.SftpClient)Field("_sftp");var recovery=(Func<bool,Renci.SshNet.SftpClient>)Field("_fileChannel");using var recovered=recovery(true);
+                foreach(var info in new[]{ssh.ConnectionInfo,sftp.ConnectionInfo,recovered.ConnectionInfo}){Check(!info.Encryptions.ContainsKey("3des-cbc"),"actual SSH/SFTP/recovery transport rejects retired TDEA cipher");Check(info.Encryptions.ContainsKey("aes256-ctr")&&info.Encryptions.ContainsKey("aes256-gcm@openssh.com")&&info.Encryptions.ContainsKey("chacha20-poly1305@openssh.com"),"actual transport retains supported AES and ChaCha20 alternatives");}
+            }
             Console.WriteLine($"{count} security review checks passed"); return 0;
         }
         finally { root.Delete(true); }

@@ -1,4 +1,4 @@
-param([string]$Version = '0.2.19', [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{40}$')][string]$Thumbprint, [switch]$AllowUntrusted, [switch]$PackageOnly)
+param([string]$Version = '0.2.20', [Parameter(Mandatory)][ValidatePattern('^[A-Fa-f0-9]{40}$')][string]$Thumbprint, [switch]$AllowUntrusted, [switch]$PackageOnly)
 $ErrorActionPreference = 'Stop'
 $repositoryPath = Split-Path $PSScriptRoot -Parent
 Push-Location $repositoryPath

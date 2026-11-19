@@ -1,10 +1,10 @@
 using System.Net;
 using System.Text.Json;
 namespace UnscRelay.Core;
-public sealed record SharedArchive(Guid Id,string Name,string OwnerAccount,string ArchiveOwner,string Access,long Version,string OwnerName="",bool Offline=false,bool Personal=false);
+public sealed record SharedArchive(Guid Id,string Name,string OwnerAccount,string ArchiveOwner,string Access,long Version,string OwnerName="",bool Offline=false,bool Personal=false,bool SharingSuspended=false,DateTimeOffset? AccessExpiresAt=null,bool AccessReviewDue=false);
 public sealed record SharedArchiveDevice(Guid Id,string Publickey,string Fingerprint);
 public sealed record OwnArchiveDevice(Guid Id,string Publickey,DateTimeOffset? Revoked);
-public sealed record SharedArchiveMember(string Account,string Email,string Access);
+public sealed record SharedArchiveMember(string Account,string Email,string Access,DateTimeOffset? ExpiresAt=null);
 public sealed record SharedArchiveTransfer(Guid Id,string Proof,DateTimeOffset ExpiresAt);
 public sealed partial class CloudAccountClient
 {
@@ -16,7 +16,13 @@ public sealed partial class CloudAccountClient
   if(typeof(T)==typeof(bool))return (T)(object)true;
   return JsonSerializer.Deserialize<T>(await response.Content.ReadAsStringAsync(ct),VaultSyncCrypto.Json)??throw new InvalidDataException("Risposta archivio non valida.");
  }
+ public Task<bool> RequestArchiveAccess(Guid id,CancellationToken ct){if(id==Guid.Empty)throw new ArgumentException("Archivio non valido.");return ArchiveRequest<bool>(HttpMethod.Post,"api/archive-access-requests",new{archiveId=id},ct);}
+ public Task<JsonElement> ArchiveAccessRequests(Guid id,CancellationToken ct)=>ArchiveRequest<JsonElement>(HttpMethod.Get,ArchivePath(id)+"/access-requests",null,ct);
+ public Task<JsonElement> ApproveArchiveAccessRequest(Guid id,Guid request,string access,DateTimeOffset? expiresAt,CancellationToken ct)=>ArchiveRequest<JsonElement>(HttpMethod.Post,ArchivePath(id)+"/access-requests/"+request.ToString("D")+"/approve",new{access,expiresAt},ct);
+ public Task<bool> DismissArchiveAccessRequest(Guid id,Guid request,CancellationToken ct)=>ArchiveRequest<bool>(HttpMethod.Delete,ArchivePath(id)+"/access-requests/"+request.ToString("D"),null,ct);
  public Task<List<OwnArchiveDevice>> OwnArchiveDevices(CancellationToken ct)=>ArchiveRequest<List<OwnArchiveDevice>>(HttpMethod.Get,"api/archive-devices",null,ct);
+ public Task<JsonElement> ArchiveAccessReview(Guid id,CancellationToken ct)=>ArchiveRequest<JsonElement>(HttpMethod.Get,ArchivePath(id)+"/access-review",null,ct);
+ public Task<bool> AcknowledgeArchiveReview(Guid id,int intervalDays,string intent,CancellationToken ct)=>ArchiveRequest<bool>(HttpMethod.Post,ArchivePath(id)+"/access-review",new{intervalDays,intent},ct);
  public Task<List<SharedArchive>> Archives(CancellationToken ct)=>ArchiveRequest<List<SharedArchive>>(HttpMethod.Get,"api/archives",null,ct);
  public async Task<SharedArchive> PersonalArchive(CancellationToken ct)
  {
@@ -26,8 +32,10 @@ public sealed partial class CloudAccountClient
  }
  public Task<SharedArchive> CreateArchive(string name,CancellationToken ct)=>ArchiveRequest<SharedArchive>(HttpMethod.Post,"api/archives",new{name},ct);
  public Task<bool> RenameArchive(Guid id,string name,CancellationToken ct)=>ArchiveRequest<bool>(HttpMethod.Put,ArchivePath(id),new{name},ct);
+ public Task<JsonElement> ArchiveStorageUsage(Guid id,CancellationToken ct)=>ArchiveRequest<JsonElement>(HttpMethod.Get,ArchivePath(id)+"/storage",null,ct);
+ public Task<JsonElement> ArchiveActivity(Guid id,int page,CancellationToken ct){if(page is <0 or >10000)throw new ArgumentException("Pagina non valida.");return ArchiveRequest<JsonElement>(HttpMethod.Get,ArchivePath(id)+"/activity?page="+page.ToString(System.Globalization.CultureInfo.InvariantCulture),null,ct);}
  public Task<List<SharedArchiveMember>> ArchiveMembers(Guid id,CancellationToken ct)=>ArchiveRequest<List<SharedArchiveMember>>(HttpMethod.Get,ArchivePath(id)+"/members",null,ct);
- public Task<JsonElement> ShareArchive(Guid id,string email,string access,CancellationToken ct)=>ArchiveRequest<JsonElement>(HttpMethod.Post,ArchivePath(id)+"/members",new{email,access},ct);
+ public Task<JsonElement> ShareArchive(Guid id,string email,string access,CancellationToken ct,DateTimeOffset? expiresAt=null)=>ArchiveRequest<JsonElement>(HttpMethod.Post,ArchivePath(id)+"/members",new{email,access,expiresAt},ct);
  public Task<bool> RemoveArchiveMember(Guid id,string account,CancellationToken ct){if(account is not{Length:64}||!account.All(char.IsAsciiHexDigit))throw new ArgumentException("Destinatario non valido.");return ArchiveRequest<bool>(HttpMethod.Delete,ArchivePath(id)+"/members/"+account,null,ct);}
  public Task<List<SharedArchiveDevice>> ArchiveDevices(Guid id,string account,CancellationToken ct){if(account is not{Length:64}||!account.All(char.IsAsciiHexDigit))throw new ArgumentException("Destinatario non valido.");return ArchiveRequest<List<SharedArchiveDevice>>(HttpMethod.Get,ArchivePath(id)+"/devices/"+account,null,ct);}
  public Task<bool> RegisterArchiveDevice(ArchiveDeviceKey device,CancellationToken ct){if(device.Account!=State.Owner)throw new OnlineAccessException("Il dispositivo appartiene a un altro account.");return ArchiveRequest<bool>(HttpMethod.Post,"api/archive-devices",new{deviceId=device.Id,publicKey=device.PublicKey,label="UNSC Relay · Windows"},ct);}

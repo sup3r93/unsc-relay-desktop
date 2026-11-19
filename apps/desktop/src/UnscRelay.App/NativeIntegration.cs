@@ -15,7 +15,7 @@ public partial class MainWindow
     readonly Dictionary<string, ConnectionProfile> nativeSessionProfiles = [];
     readonly Dictionary<string, string> nativePublicFolders = [];
     string NativeHelper => Environment.ProcessPath ?? throw new IOException("EXE dell'app non disponibile.");
-    void StopBundledAgent() { try { if (bundledAgent is { HasExited: false }) bundledAgent.Kill(); } catch (InvalidOperationException) { } bundledAgent?.Dispose(); bundledAgent = null; var socket = NativeAgent.SocketForHome(Path.Combine(dataPath, "NativeHome")); if (File.Exists(socket)) File.Delete(socket); }
+    void StopBundledAgent() { try { if (bundledAgent is { HasExited: false }) bundledAgent.Kill(); } catch (InvalidOperationException) { } bundledAgent?.Dispose(); bundledAgent = null; var socket = NativeAgent.SocketForHome(Path.Combine(dataPath, "NativeHome")); try{if (File.Exists(socket)) File.Delete(socket);}catch(Exception error)when(error is IOException or UnauthorizedAccessException){/* Agent is stopped; a busy stale socket is cleaned on a later attempt. */} }
     NativeBridge CreateNativeBridge(ConnectionProfile profile, string? phrase = null, string? sessionId = null,bool recovering=false) => new(req => Dispatcher.InvokeAsync(async () =>
     {
         if(req.Action == "authenticated" && req.Arguments.Length == 0 && sessionId != null && nativeHookSessions.TryGetValue(sessionId,out var hooks)) { _ = CompleteNativeAuthentication(sessionId,hooks); return new NativeReply(true); }
@@ -104,7 +104,7 @@ public partial class MainWindow
             nativeAuthenticated.Add(id);
             if(nativeSessionProfiles.TryGetValue(id,out var authenticatedProfile))nativeRecoveryProfiles.TryAdd(id,NativeRecovery.Snapshot(authenticatedProfile));
             Emit("nativeAuthenticated",new{sessionId=id,connected=true,text="OpenSSH autenticato"});
-            if(!CriticalUpdateRequired)await hooks.Authenticated();
+            if(!OperationsLocked)await hooks.Authenticated();
         }
         catch(Exception ex)when(ex is IOException or TimeoutException or ObjectDisposedException){Emit("notice",new{text=ex.Message});}
     }
@@ -124,7 +124,7 @@ public partial class MainWindow
         var files=new List<StorageFiles>();
         foreach(var child in children){if(storageSessions.Remove(child,out var file))files.Add(file);if(!preserveChildren)nativeStorageParents.Remove(child);Emit("storageStatus",new{sessionId=child,connected=false,text="Connessione OpenSSH terminata. Browser SFTP in attesa di riconnessione."});}
         foreach(var file in files)await file.DisposeAsync();
-        if(hooks!=null)await hooks.Finished(!CriticalUpdateRequired&&runHooks&&!updating&&!updateClosing);
+        if(hooks!=null)await hooks.Finished(!OperationsLocked&&runHooks&&!updating&&!updateClosing);
         if(control!=null)await control.DisposeAsync();if(bridge!=null)await bridge.DisposeAsync();
         if(folder!=null){foreach(var name in new[]{"config","identity.pub","identity-cert.pub","(stdin)-cert.pub"}){var file=Path.Combine(folder,name);if(File.Exists(file))File.Delete(file);}try{Directory.Delete(folder);}catch(IOException){}}
     }

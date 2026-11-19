@@ -23,7 +23,12 @@ public sealed class AccountSyncState
     public string RefreshToken { get; set; } = "";
     public DateTimeOffset TokenExpires { get; set; }
     public bool Activated { get; set; }
+    public Guid ErasureRequestId { get; set; }
+    public DateTimeOffset? ErasureExecuteAfter { get; set; }
+    public string ErasureCapability { get; set; } = "";
+    public bool ErasureCapabilityRegistered { get; set; }
     public bool Migrated { get; set; }
+    public DateTimeOffset? LastSuccessfulSync {get;set;}
     public long Revision { get; set; }
     public string Baseline { get; set; } = "";
     public SyncEnvelope? Header { get; set; }
@@ -36,25 +41,32 @@ public sealed class PersonalArchiveChangedException():OnlineAccessException("L�
 
 public sealed class AccountSyncStore(string directory)
 {
-    private string FilePath => Path.Combine(directory,"account-sync.dpapi");
+    private string FilePath => LocalDataFiles.Child(directory,"account-sync.dpapi");
     public AccountSyncState Load()
     {
         if(!File.Exists(FilePath))return new();
         if(new FileInfo(FilePath).Length>256*1024)throw new InvalidDataException("Collegamento account non valido. La copia locale non è stata modificata.");
+        return Decode(LocalDataFiles.Read(directory,"account-sync.dpapi",256*1024));
+    }
+    internal static AccountSyncState Decode(byte[] sealedBytes)
+    {
         byte[] bytes;
-        try{bytes=UpdateTokenStore.Transform(File.ReadAllBytes(FilePath),true);}
+        try{bytes=UpdateTokenStore.Transform(sealedBytes,true);}
         catch(InvalidOperationException ex){throw new InvalidDataException("Il collegamento online non è leggibile su questo account Windows. I file locali restano intatti.",ex);}
+        finally{CryptographicOperations.ZeroMemory(sealedBytes);}
         try {
             var state=JsonSerializer.Deserialize<AccountSyncState>(bytes,VaultSyncCrypto.Json)??throw new InvalidDataException("Account non valido.");
+            if(state.Owner is null||state.Subject is null||state.Name is null||state.Email is null||state.ArchiveOwner is null||state.AccessToken is null||state.RefreshToken is null||state.Subject.Length>128||state.Subject.Any(char.IsControl))throw new InvalidDataException("Collegamento account non valido.");
             if(state.Format!="unsc-account-v1" || state.Activated&&(state.Owner.Length!=64||state.Owner.Any(c=>!char.IsAsciiHexDigit(c))||string.IsNullOrWhiteSpace(state.Subject)))throw new InvalidDataException("Collegamento account non valido.");
             if(state.ArchiveOwner.Length>0&&(state.ArchiveOwner.Length!=64||!state.ArchiveOwner.All(char.IsAsciiHexDigit)))throw new InvalidDataException("Namespace archivio non valido.");
+            if(state.ErasureCapability is null||state.ErasureCapability.Length!=0&&(state.ErasureCapability.Length!=43||state.ErasureCapability.Any(c=>!char.IsAsciiLetterOrDigit(c)&&c is not('-' or '_')))||state.ErasureRequestId==Guid.Empty&&(state.ErasureCapability.Length>0||state.ErasureExecuteAfter!=null||state.ErasureCapabilityRegistered))throw new InvalidDataException("Verifica di cancellazione del dispositivo non valida.");
             return state;
         }finally{CryptographicOperations.ZeroMemory(bytes);}
     }
     public void Save(AccountSyncState state)
     {
         var bytes=JsonSerializer.SerializeToUtf8Bytes(state,VaultSyncCrypto.Json);
-        try { AtomicFile.Write(FilePath,UpdateTokenStore.Transform(bytes,false)); }
+        try { LocalDataFiles.Write(directory,"account-sync.dpapi",UpdateTokenStore.Transform(bytes,false)); }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 }
@@ -66,11 +78,14 @@ public sealed partial class CloudAccountClient : IDisposable
     private readonly AccountSyncStore storage;
     private readonly SemaphoreSlim authGate=new(1,1);
     private readonly HttpClient http;
+    readonly HttpClient erasureReceiptHttp;
+    string uiLanguage="it";
+    public string UiLanguage{get=>uiLanguage;set=>uiLanguage=InterfaceLocale.Require(value);}
     public AccountSyncState State { get; }
-    public CloudAccountClient(string directory) : this(directory,new HttpClientHandler { AllowAutoRedirect=false }) { }
-    internal CloudAccountClient(string directory,HttpMessageHandler handler) { storage=new(directory);State=storage.Load();http=new(handler){BaseAddress=new Uri("https://unsc.responda.eu/"),Timeout=TimeSpan.FromSeconds(30),MaxResponseContentBufferSize=64*1024*1024}; }
-    private static OidcClient Client(IBrowser? browser=null)=>new(new OidcClientOptions { Authority=Authority,ClientId="unsc-desktop",RedirectUri=Callback,Scope="openid profile email",Browser=browser,LoadProfile=false });
-    public void Save()=>storage.Save(State);
+    public CloudAccountClient(string directory) : this(directory,new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false },new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false }) { }
+    internal CloudAccountClient(string directory,HttpMessageHandler handler,HttpMessageHandler? receiptHandler=null) { storage=new(directory);State=storage.Load();http=new(handler){BaseAddress=new Uri("https://unsc.responda.eu/"),Timeout=TimeSpan.FromSeconds(30),MaxResponseContentBufferSize=64*1024*1024};erasureReceiptHttp=new(receiptHandler??handler,disposeHandler:receiptHandler!=null){BaseAddress=new Uri("https://unsc.responda.eu/"),Timeout=TimeSpan.FromSeconds(15),MaxResponseContentBufferSize=16384}; }
+    private static OidcClient Client(IBrowser? browser=null,string clientId="unsc-desktop")=>new(new OidcClientOptions { Authority=Authority,ClientId=clientId,RedirectUri=Callback,Scope=clientId=="unsc-desktop-stepup"?"openid":"openid profile email",Browser=browser,LoadProfile=false });
+    public void Save(){if(ErasureRevoked)throw new OperationCanceledException("Account cancellato. Il collegamento locale non verrà riscritto.");storage.Save(State);}
     public static string RememberedEmail(AccountSyncState state)
     {
         foreach(var value in new[]{state.Email,state.Name})
@@ -83,6 +98,7 @@ public sealed partial class CloudAccountClient : IDisposable
         try {
             if(action=="register"&&!await RegistrationAllowed(ct))throw new OnlineAccessException("Le registrazioni sono temporaneamente chiuse dall’amministratore.");
             var request=new LoginRequest();
+            request.FrontChannelExtraParameters.Add("ui_locales",UiLanguage);
             var hint=RememberedEmail(State);if(action!="register"&&hint.Length>0)request.FrontChannelExtraParameters.Add("login_hint",hint);
             request.FrontChannelExtraParameters.Add("prompt",action=="register"?"create":"login");
             if(action=="login")request.FrontChannelExtraParameters.Add("max_age","0");
@@ -93,7 +109,7 @@ public sealed partial class CloudAccountClient : IDisposable
             var login=await Client(browser??new LoopbackAccountBrowser()).LoginAsync(request,ct);
             if(login.IsError||string.IsNullOrEmpty(login.AccessToken))throw new OnlineAccessException("Accesso al sito non completato. Nessun dato locale è stato modificato.");
             var identity=await Identity(login.AccessToken,ct);
-            if(State.Owner.Length>0&&identity.Owner!=State.Owner)throw new OnlineAccessException("Questo archivio locale è già associato a un altro account. Accedi con l’account originale: non mescolerò i suoi dati.");
+            RequireBoundIdentity(identity);
             State.Owner=identity.Owner;State.Subject=identity.Subject;State.Name=identity.Name;
             State.Email=RememberedEmail(new AccountSyncState { Email=identity.Email,Name=identity.Name });
             State.AccessToken=login.AccessToken;State.RefreshToken=login.RefreshToken??"";State.TokenExpires=login.AccessTokenExpiration;State.Activated=true;Save();
@@ -109,7 +125,8 @@ public sealed partial class CloudAccountClient : IDisposable
         using var response=await Send(HttpMethod.Get,"api/profile",null,ct);response.EnsureSuccessStatusCode();
         using var document=JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));return document.RootElement.Clone();
     }
-    public async Task VerifyOnline(CancellationToken ct){var identity=await Identity(await Token(ct),ct);if(identity.Owner!=State.Owner)throw new OnlineAccessException("Identità online diversa dall’archivio locale.");}
+    internal void RequireBoundIdentity(OnlineIdentity identity){if(State.Owner.Length>0&&(identity.Owner!=State.Owner||State.Subject.Length>0&&identity.Subject!=State.Subject))throw new OnlineAccessException("Questo archivio locale è già associato a un altro account. Accedi con l’account originale: non mescolerò i suoi dati.");}
+    public async Task VerifyOnline(CancellationToken ct){var identity=await Identity(await Token(ct),ct);RequireBoundIdentity(identity);}
     public async Task LogoutAsync(CancellationToken ct)
     {
         await authGate.WaitAsync(ct);
@@ -118,7 +135,7 @@ public sealed partial class CloudAccountClient : IDisposable
             var refresh=State.RefreshToken;
             State.AccessToken="";State.RefreshToken="";State.TokenExpires=DateTimeOffset.MinValue;State.Activated=false;
             // An archive never uploaded may be linked to the correct personal account after explicit logout.
-            if(!State.Migrated&&State.Header is null&&State.Revision==0){State.Owner="";State.Subject="";State.Name="";State.Baseline="";}
+            if(!State.Migrated&&State.Header is null&&State.Revision==0&&State.ErasureRequestId==Guid.Empty){State.Owner="";State.Subject="";State.Name="";State.Baseline="";}
             Save();
             if(refresh.Length==0)return;
             try{using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct);timeout.CancelAfter(TimeSpan.FromSeconds(8));
@@ -131,10 +148,11 @@ public sealed partial class CloudAccountClient : IDisposable
     {
         using var request=new HttpRequestMessage(HttpMethod.Get,"api/account");request.Headers.Authorization=new("Bearer",token);
         using var response=await http.SendAsync(request,ct);
+        await ThrowIfErased(response,ct);
         if(response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized)throw new OnlineAccessException("Account non abilitato per l’app. Gli amministratori usano soltanto il sito; per Relay scegli un account personale abilitato.");
         response.EnsureSuccessStatusCode();
         var identity=await response.Content.ReadFromJsonAsync<OnlineIdentity>(VaultSyncCrypto.Json,ct)??throw new OnlineAccessException("Identità online non valida.");
-        if(identity.Owner.Length!=64||identity.Owner.Any(c=>!char.IsAsciiHexDigit(c))||string.IsNullOrWhiteSpace(identity.Subject))throw new OnlineAccessException("Identità online non valida.");
+        if(identity.Owner is not{Length:64}||identity.Owner.Any(c=>!char.IsAsciiHexDigit(c))||string.IsNullOrWhiteSpace(identity.Subject)||identity.Name is null||identity.Email is null||identity.Name.Length>254||identity.Email.Length>254||identity.Name.Any(char.IsControl)||identity.Email.Any(char.IsControl))throw new OnlineAccessException("Identità online non valida.");
         return identity;
     }
     private async Task<string> Token(CancellationToken ct)
@@ -152,14 +170,19 @@ public sealed partial class CloudAccountClient : IDisposable
             State.TokenExpires=refreshed.AccessTokenExpiration;Save();return State.AccessToken;
         }finally{authGate.Release();}
     }
-    private async Task<HttpResponseMessage> Send(HttpMethod method,string path,object? value,CancellationToken ct,long? expected=null)
+    private async Task<HttpResponseMessage> Send(HttpMethod method,string path,object? value,CancellationToken ct,long? expected=null,Guid? confirmation=null,HttpCompletionOption completion=HttpCompletionOption.ResponseContentRead)
     {
+        if(ErasureRevoked)throw new OperationCanceledException("Account cancellato. Le nuove operazioni sono bloccate.");
         for(var attempt=0;attempt<2;attempt++) {
             using var request=new HttpRequestMessage(method,path);request.Headers.Authorization=new("Bearer",await Token(ct));
+            if(confirmation is not null)request.Headers.Add("X-Relay-Confirmation",confirmation.Value.ToString("D"));
             if(value is not null)request.Content=JsonContent.Create(value,options:VaultSyncCrypto.Json);
+            if(method==HttpMethod.Put&&(path=="api/vault"||path.StartsWith("api/archives/",StringComparison.Ordinal)&&path.EndsWith("/vault",StringComparison.Ordinal)))request.Headers.Add("X-Relay-Data-Schema","2");
             if(method==HttpMethod.Put)request.Headers.IfMatch.Add(new EntityTagHeaderValue("\""+(expected??State.Revision)+"\""));
-            var response=await http.SendAsync(request,ct);
+            var response=await http.SendAsync(request,completion,ct);
+            try{await ThrowIfErased(response,ct);}catch{response.Dispose();throw;}
             if(response.StatusCode==HttpStatusCode.Unauthorized&&attempt==0){response.Dispose();State.TokenExpires=DateTimeOffset.MinValue;continue;}
+            if(response.StatusCode==HttpStatusCode.UpgradeRequired){response.Dispose();throw new OnlineAccessException("Questo archivio richiede una versione più recente di Relay. Ricarica il sito o aggiorna l’app prima di sincronizzare; la copia locale è conservata.",HttpStatusCode.UpgradeRequired);}
             if(response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden){response.Dispose();throw new OnlineAccessException("Accesso online non disponibile. Accedi di nuovo; la copia locale è conservata.",response.StatusCode);}
             return response;
         }
@@ -205,7 +228,7 @@ public sealed partial class CloudAccountClient : IDisposable
         response.EnsureSuccessStatusCode();using var json=JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         return json.RootElement.GetProperty("revision").GetInt64();
     }
-    public void Dispose(){http.Dispose();authGate.Dispose();}
+    public void Dispose(){erasureReceiptHttp.Dispose();http.Dispose();authGate.Dispose();}
 }
 
 public sealed class LoopbackAccountBrowser : IBrowser
@@ -215,7 +238,7 @@ public sealed class LoopbackAccountBrowser : IBrowser
         var start=new Uri(options.StartUrl);
         if(start.Scheme!="https"||start.Host!="unsc.responda.eu"||options.EndUrl!=CloudAccountClient.Callback)throw new InvalidOperationException("Destinazione di accesso non autorizzata.");
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);timeout.CancelAfter(TimeSpan.FromMinutes(10));
-        var listener=new TcpListener(IPAddress.Loopback,48187);listener.Server.ExclusiveAddressUse=true;
+        using var listener=new TcpListener(IPAddress.Loopback,48187);listener.Server.ExclusiveAddressUse=true;
         try {
             listener.Start(4);
             Process.Start(new ProcessStartInfo(options.StartUrl){UseShellExecute=true});

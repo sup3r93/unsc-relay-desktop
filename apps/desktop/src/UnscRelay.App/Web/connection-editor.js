@@ -1,56 +1,367 @@
-'use strict';
-function folderChoices(current){
- const paths=new Set(['Connessioni',...(state.data.folders||[]),current||'Connessioni']);for(const path of [...paths]){const parts=path.split('/');for(let i=1;i<parts.length;i++)paths.add(parts.slice(0,i).join('/'))}
- return [...paths].sort((a,b)=>a.localeCompare(b)).map(path=>{const parts=path.split('/');return[path,'\u00a0'.repeat((parts.length-1)*3)+(parts.length>1?'└ ':'')+parts.at(-1)]})
+"use strict";
+function folderChoices(current) {
+  const paths = /* @__PURE__ */ new Set(["Connessioni", ...state.data.folders || [], current || "Connessioni"]);
+  for (const path of [...paths]) {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) paths.add(parts.slice(0, i).join("/"));
+  }
+  return [...paths].sort((a, b) => a.localeCompare(b)).map((path) => {
+    const parts = path.split("/");
+    return [path, " ".repeat((parts.length - 1) * 3) + (parts.length > 1 ? "└ " : "") + parts.at(-1)];
+  });
 }
-function renderConnectionProfile(existing,selection=null,draft=null){
- if(existing?.storage?.browser||selection?.storage)return storageProfileDialog(existing,selection,draft);
- if(existing?.protocol==='native'||selection?.protocol==='native')return nativeProfileDialog(existing,selection,draft);
- const p=existing?structuredClone(existing):{id:crypto.randomUUID().replaceAll('-',''),name:'',folder:'Connessioni',host:'',port:22,username:'',protocol:'ssh',environment:'sviluppo',keyId:'',passwordId:'',authentication:'password',remoteDirectory:'.',notes:'',tags:'',jumpHost:'',tmuxSession:'',subsystem:'',favorite:false,tunnels:[]};
- if(!existing&&selection){Object.assign(p,draft||{},{protocol:selection.protocol,localShell:selection.shell||'cmd',port:selection.protocol==='rdp'?3389:selection.protocol==='vnc'?5900:22});}
- const body=showModal(existing?'Modifica connessione':'Nuova connessione','PROFILI / ACCESSO REMOTO',null,true);modal.classList.add('connection-modal');
- if(!existing&&selection){const context=document.createElement('div');context.className='session-kind-header';const name=document.createElement('strong');name.textContent=selection.name+' / nuova sessione';context.append(name,button('← Cambia tipo',()=>sessionTypeDialog(Object.fromEntries([...new FormData(form)].filter(([key])=>['name','folder','notes','tags','host','username'].includes(key))))));body.append(context)}
- const form=document.createElement('form');form.noValidate=true;form.className='connection-form';const tabs=document.createElement('div');tabs.className='connection-tabs';tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Configurazione connessione');form.append(tabs);const panels=new Map();
- for(const [id,label]of [['general','Connessione'],['local','Shell locale'],['auth','Autenticazione'],['terminal','Terminale'],['files','SFTP'],['desktop','Desktop remoto'],['network','Rete e SSH'],['hooks','Automazione'],['macro','Macro di avvio'],['notes','Note']]){
-  const panel=document.createElement('section');panel.id='connection-'+id;panel.className='connection-panel';panel.setAttribute('role','tabpanel');panel.setAttribute('aria-label',label);panel.hidden=id!=='general';const grid=document.createElement('div');grid.className='form-grid';panel.append(grid);const tab=button(label,()=>select(id));tab.setAttribute('role','tab');tab.setAttribute('aria-controls',panel.id);tab.setAttribute('aria-selected',String(id==='general'));tab.dataset.tab=id;tabs.append(tab);panels.set(id,{panel,grid,tab});form.append(panel)
- }
- function select(id){for(const[key,value]of panels){value.panel.hidden=key!==id;value.tab.setAttribute('aria-selected',String(key===id));value.tab.tabIndex=key===id?0:-1}}
- tabs.onkeydown=e=>{if(!['ArrowLeft','ArrowRight'].includes(e.key))return;e.preventDefault();const enabled=[...panels.values()].filter(x=>!x.tab.disabled&&!x.tab.hidden);const index=enabled.findIndex(x=>x.tab===document.activeElement);const next=enabled[(index+(e.key==='ArrowRight'?1:-1)+enabled.length)%enabled.length];select(next.tab.dataset.tab);next.tab.focus()};
- function check(parent,label,name,checked){const row=document.createElement('label');row.className='check-label';const input=document.createElement('input');input.type='checkbox';input.name=name;input.checked=!!checked;row.append(input,label);parent.append(row);return input}
- const general=panels.get('general').grid;
- field(general,'Nome','name',p.name);const folder=field(general,'Cartella','folder',p.folder,'text',folderChoices(p.folder));
- const newFolder=button('＋ Nuova cartella',()=>{folderCreate.hidden=!folderCreate.hidden});general.append(newFolder);const folderCreate=document.createElement('div');folderCreate.className='folder-create wide';folderCreate.hidden=true;const folderPath=field(folderCreate,'Cartella / sottocartella','newFolderPath','');folderCreate.append(button('Crea e seleziona',async()=>{const path=folderPath.value.trim();if(!path)return;update(await call('folderCreate',{path}));folder.replaceChildren();for(const[v,t]of folderChoices(path)){const option=document.createElement('option');option.value=v;option.textContent=t;folder.append(option)}folder.value=path;folderCreate.hidden=true}));general.append(folderCreate);
- const protocol=field(general,'Tipo di sessione','protocol',p.protocol,'text',[['ssh','SSH + SFTP'],['sftp','SFTP'],['rdp','Desktop remoto / RDP'],['vnc','VNC'],['local','Sessione locale']]);if(selection&&!existing)protocol.disabled=true;field(general,'Ambiente','environment',p.environment,'text',[['sviluppo','Sviluppo'],['test','Test'],['produzione','Produzione']]);const host=field(general,'Host / indirizzo','host',p.host);const port=field(general,'Porta','port',p.port,'number');port.min=1;port.max=65535;const username=field(general,'Username','username',p.username);field(general,'Tag','tags',p.tags);const favorite=check(panels.get('general').panel,'Preferito','favorite',p.favorite);
- const machine=field(general,'Macchina dalla rubrica','machineSelect','','text',[['','Inserisci un indirizzo oppure scegli una macchina'],...(state.data.machines||[]).map(m=>[m.id,m.name+' / '+m.host+':'+m.port])]);machine.onchange=()=>{const entry=(state.data.machines||[]).find(m=>m.id===machine.value);if(entry){host.value=entry.host;port.value=entry.port}};
- const addMachine=check(panels.get('general').panel,'Aggiungi a rubrica','addToAddressBook',false);const machineName=field(general,'Nome della macchina in rubrica','machineName','');machineName.parentElement.hidden=true;addMachine.onchange=()=>{machineName.parentElement.hidden=!addMachine.checked;machineName.disabled=!addMachine.checked;machineName.required=addMachine.checked};
-
- const local=panels.get('local').grid;const shell=field(local,'Shell','localShell',p.localShell||'cmd','text',[['cmd','CMD'],['powershell','Windows PowerShell'],['pwsh','PowerShell 7'],['wsl','WSL / Linux']]);const distribution=field(local,'Distribuzione WSL','wslDistribution',p.wslDistribution||'','text',[['','Distribuzione predefinita'],...(p.wslDistribution?[[p.wslDistribution,p.wslDistribution]]:[])]);const initial=field(local,'Cartella iniziale','startupDirectory',p.startupDirectory||'');const chooseInitial=button('Scegli cartella iniziale',async()=>{const path=await call('localShellFolder');if(path)initial.value=path});local.append(chooseInitial);const startup=field(local,'Comandi di avvio (facoltativi)','startupCommands',p.startupCommands||'','textarea');startup.maxLength=8192;startup.parentElement.className='wide';const available=document.createElement('p');available.className='notice wide';local.append(available);notice(panels.get('local').panel,'I comandi partono a ogni nuova apertura, anche da workspace. Sono salvati in chiaro: non inserire password o token. Windows PowerShell e PowerShell 7 partono senza caricare il profilo personale.');let catalog=null,loadingCatalog=false;
- function refreshLocal(){visible(distribution,shell.value==='wsl');chooseInitial.hidden=shell.value==='wsl';initial.placeholder=shell.value==='wsl'?'Percorso Linux, ad esempio /home/utente/progetti · vuoto: home':'Percorso Windows assoluto · vuoto: cartella utente';available.textContent=shell.value==='wsl'?'WSL usa soltanto le distribuzioni gia installate. Nessuna installazione automatica.':'La shell viene eseguita sul PC con i tuoi permessi, nella scheda corrente.';if(catalog){const selected=catalog.shells.find(x=>x.id===shell.value);available.textContent+=(selected?.available?' · '+selected.name+' disponibile':' · Shell non disponibile');if(shell.value==='wsl'&&!catalog.distributions.length)available.textContent+=' · Nessuna distribuzione rilevata';if(catalog.warning)available.textContent+=' · '+catalog.warning}}
- async function loadLocalCatalog(){if(catalog||loadingCatalog)return;loadingCatalog=true;try{catalog=await call('localAvailability');const selected=distribution.value;distribution.replaceChildren(new Option('Distribuzione predefinita',''));for(const name of catalog.distributions)distribution.append(new Option(name,name));if(selected&&!catalog.distributions.includes(selected))distribution.append(new Option(selected+' (non disponibile)',selected));distribution.value=selected;for(const option of shell.options){const choice=catalog.shells.find(x=>x.id===option.value);option.disabled=choice?.available===false}refreshLocal()}catch{}finally{loadingCatalog=false}}
- shell.onchange=refreshLocal;
- const auth=panels.get('auth').grid;const method=field(auth,'Metodo di autenticazione','authentication',p.authentication==='auto'?(p.keyId?'key':'password'):p.authentication,'text',[['password','Password'],['key','Chiave SSH'],['keyboard-interactive','Autenticazione interattiva / 2FA'],['openssh-agent','Agent OpenSSH / FIDO'],['pageant','PuTTY Pageant']]);
- const vaultState=document.createElement('p');vaultState.className='notice wide';auth.append(vaultState);const unlock=button(state.vault.exists?'Sblocca archivio':'Crea archivio',async()=>{update(await call('vaultUnlock'));refreshKeys();refreshAuth()});auth.append(unlock);
- const password=field(auth,'Password','password','','password');password.autocomplete='new-password';password.maxLength=8192;password.placeholder=p.passwordId?'Password salvata · lascia vuoto per mantenerla':'Inserisci la password oppure lascia vuoto per chiederla alla connessione';
- const remember=check(panels.get('auth').panel,'Salva la password nell’archivio cifrato','rememberPassword',!!p.passwordId);
- const key=field(auth,'Chiave SSH nell’archivio','keyId',p.keyId,'text',[]);const phrase=field(auth,'Passphrase della chiave (solo per questa apertura dell’app)','keyPassphrase','','password');phrase.autocomplete='new-password';phrase.maxLength=8192;
- const agent=field(auth,'Impronta dell’identità agent (opzionale)','agentFingerprint',p.agentFingerprint||'');const fallback=check(panels.get('auth').panel,'Consenti autenticazione interattiva come fallback','keyboardFallback',p.keyboardFallback);const authHint=document.createElement('p');authHint.className='notice';panels.get('auth').panel.append(authHint);
- function refreshKeys(){const selected=key.value||p.keyId;key.replaceChildren();for(const[v,t]of [['','Seleziona una chiave'],...(state.vault.keys||[]).filter(k=>k.kind!=='ssh-native-key').map(k=>[k.id,k.name])]){const option=document.createElement('option');option.value=v;option.textContent=t;key.append(option)}if(selected&&![...key.options].some(o=>o.value===selected)){const option=document.createElement('option');option.value=selected;option.textContent=state.vault.unlocked?'Chiave non disponibile':'Chiave associata · sblocca l’archivio';key.append(option)}key.value=selected}
- function visible(input,yes){input.parentElement.hidden=!yes;input.disabled=!yes}
- function refreshAuth(){const desktop=['rdp','vnc'].includes(protocol.value);if(desktop)method.value='password';for(const option of method.options)option.disabled=desktop&&option.value!=='password';const isPassword=method.value==='password',isKey=method.value==='key',isAgent=['openssh-agent','pageant'].includes(method.value);visible(password,isPassword);visible(key,isKey);visible(phrase,isKey);visible(agent,isAgent);visible(remember,isPassword);visible(fallback,!desktop&&method.value!=='keyboard-interactive');key.disabled=!isKey||!state.vault.unlocked;vaultState.textContent=state.vault.unlocked?'Archivio sbloccato'+(p.passwordId?' · password della connessione salvata':''):'Archivio bloccato'+(p.passwordId?' · sbloccalo per usare la password salvata':'');unlock.hidden=state.vault.unlocked;unlock.textContent=state.vault.exists?'Sblocca archivio':'Crea archivio';authHint.textContent=isPassword?'La password non viene mai scritta nel profilo. Se non la salvi, resta disponibile soltanto fino alla chiusura dell’app.':isKey?'La chiave è selezionata per nome dall’archivio. Lascia la passphrase vuota per una chiave non protetta: non sarà richiesta alla connessione.':isAgent?'La firma viene richiesta all’agent o al dispositivo; il client non esporta la chiave privata.':'Le richieste del server vengono mostrate durante la connessione.'}
- method.onchange=refreshAuth;
- const terminal=panels.get('terminal').grid;field(terminal,'Sessione tmux (opzionale)','tmuxSession',p.tmuxSession||'');notice(panels.get('terminal').panel,'Terminale UTF-8 / xterm. Il nome tmux riapre una sessione persistente soltanto se tmux è già presente sul server.');
- field(panels.get('files').grid,'Cartella locale iniziale (vuoto: Download)','localDirectory',p.localDirectory||'');const rememberDirs=check(panels.get('files').panel,'Ricorda le ultime cartelle locali e remote','rememberFileDirectories',p.rememberFileDirectories!==false);field(panels.get('files').grid,'Cartella remota iniziale','remoteDirectory',p.remoteDirectory);const subsystem=field(panels.get('files').grid,'Comando SFTP personalizzato (opzionale)','subsystem',p.subsystem);subsystem.placeholder="sudo -n /usr/lib/openssh/sftp-server";notice(panels.get('files').panel,'Vuoto: SFTP standard. Il comando remoto deve produrre soltanto il protocollo SFTP, senza banner e senza password sudo interattiva.');
- const rdpOptions=renderRdpOptions(panels.get('desktop').panel,p.rdp||{});
- const domain=field(panels.get('desktop').grid,'Dominio Windows (opzionale)','domain',p.domain||'');const viewOnly=check(panels.get('desktop').panel,'Solo visualizzazione VNC','viewOnly',p.viewOnly);const clipboard=check(panels.get('desktop').panel,'Condividi gli appunti con il computer remoto','shareClipboard',p.shareClipboard);notice(panels.get('desktop').panel,'RDP usa il componente Microsoft con verifica del server e NLA. Tramite SSH il certificato puo segnalare il nome loopback: verifica il certificato del server di destinazione; la verifica non viene disattivata. VNC usa il protocollo classico: per cifrare il traffico scegli un jump host SSH oppure una rete fidata.');
- const network=panels.get('network').grid;const jumps=[['','Connessione diretta'],...state.data.profiles.filter(x=>x.id!==p.id&&['ssh','sftp'].includes(x.protocol)).map(x=>[x.id,x.name+' / '+x.host])];if(p.jumpHost&&!jumps.some(x=>x[0]===p.jumpHost))jumps.push([p.jumpHost,'Jump host non disponibile']);const jump=field(network,'Jump host / profilo','jumpHost',p.jumpHost,'text',jumps);const timeout=field(network,'Timeout connessione (secondi)','connectTimeoutSeconds',p.connectTimeoutSeconds||20,'number');timeout.min=5;timeout.max=120;const keepAlive=field(network,'Keep-alive SSH (secondi · 0 disattiva)','keepAliveSeconds',p.keepAliveSeconds??25,'number');keepAlive.min=0;keepAlive.max=3600;const quantum=check(panels.get('network').panel,'Richiedi scambio chiavi post-quantistico','requirePostQuantumKex',p.requirePostQuantumKex);notice(panels.get('network').panel,'Ogni jump host usa le proprie credenziali e la propria verifica dell’impronta.');
- const hookPanel=panels.get('hooks').panel;notice(hookPanel,'Hook per connessioni manuali e loro chiusura, anche in caso di caduta della rete. Esclusi riconnessioni automatiche e aggiornamenti. Le righe sono salvate nel profilo: non inserire password o token. Prima connessione locale: errore interrompe il collegamento; gli altri errori sono segnalati senza annullare la connessione.');
- const hooks=renderHookEditor(hookPanel,p.hooks||[]);
- const startupMacro=renderStartupMacroEditor(panels.get('macro').panel,p);
- const notes=field(panels.get('notes').grid,'Note della connessione','notes',p.notes,'textarea');notes.parentElement.className='wide';
- protocol.onchange=()=>{if([22,3389,5900].includes(Number(port.value)))port.value=protocol.value==='rdp'?3389:protocol.value==='vnc'?5900:22;refreshProtocol()};
- function sshProtocol(){return ['ssh','sftp'].includes(protocol.value)}
- function refreshProtocol(){const isLocal=protocol.value==='local';panels.get('macro').tab.hidden=!['local','ssh'].includes(protocol.value);$('modal-kicker').textContent=isLocal?'PROFILI / SESSIONE LOCALE':'PROFILI / ACCESSO REMOTO';for(const input of [host,port,username,machine,machineName])visible(input,!isLocal&&(input!==machineName||addMachine.checked));visible(addMachine,!isLocal);panels.get('local').tab.hidden=!isLocal;for(const id of ['auth','terminal','files','desktop','network','hooks'])panels.get(id).tab.hidden=isLocal||((protocol.value==='rdp'||protocol.value==='vnc')&&['terminal','files','hooks'].includes(id))||(sshProtocol()&&id==='desktop');if(isLocal){refreshLocal();loadLocalCatalog()}const ssh=['ssh','sftp'].includes(protocol.value);username.disabled=protocol.value==='vnc';for(const id of ['terminal','files'])panels.get(id).tab.disabled=!ssh;domain.disabled=protocol.value!=='rdp';viewOnly.disabled=protocol.value!=='vnc';jump.disabled=isLocal;visible(keepAlive,ssh);visible(quantum,ssh);panels.get('network').tab.textContent=ssh?'Rete e SSH':'Rete';visible(domain,protocol.value==='rdp');visible(viewOnly,protocol.value==='vnc');refreshAuth()}
- const actions=document.createElement('div');actions.className='connection-actions';if(existing){actions.append(button('Duplica',()=>profileDialog({...p,id:crypto.randomUUID().replaceAll('-',''),name:p.name+' — copia',passwordId:''})),button('Elimina',async()=>{update(await call('deleteProfile',{profileId:p.id}));modal.close()},'danger'))}actions.append(button('Annulla',()=>modal.close()));const save=document.createElement('button');save.textContent='Salva connessione';save.className='primary';actions.append(save);form.append(actions);
- form.onsubmit=async e=>{e.preventDefault();save.disabled=true;const values=Object.fromEntries(new FormData(form));delete values.newFolderPath;delete values.machineSelect;try{const payload={...p,...values,rdp:rdpOptions(),hooks:hooks(),startupMacro:['local','ssh'].includes(protocol.value)?startupMacro():null,addToAddressBook:addMachine.checked,rememberFileDirectories:rememberDirs.checked,port:Number(values.port??p.port),connectTimeoutSeconds:Number(values.connectTimeoutSeconds||p.connectTimeoutSeconds||20),keepAliveSeconds:Number(values.keepAliveSeconds??p.keepAliveSeconds??25),favorite:favorite.checked,keyboardFallback:fallback.checked&&!fallback.disabled,rememberPassword:method.value==='password'?remember.checked:!!p.passwordId,requirePostQuantumKex:quantum.checked&&!quantum.disabled,viewOnly:viewOnly.checked&&!viewOnly.disabled,shareClipboard:clipboard.checked,password:password.disabled?'':password.value,keyPassphrase:phrase.disabled?'':phrase.value};if(protocol.value==='local')Object.assign(payload,{host:'',username:'',port:22,authentication:'auto',keyId:'',passwordId:'',rememberPassword:false,password:'',keyPassphrase:'',jumpHost:'',tmuxSession:'',subsystem:'',hooks:[],tunnels:[],addToAddressBook:false,requirePostQuantumKex:false});update(await call('saveProfile',payload));password.value=phrase.value='';modal.close();toast('Connessione salvata')}catch(error){if(error instanceof StartupMacroValidationError)toast(error.message,true)}finally{save.disabled=false}};
- refreshKeys();refreshProtocol();select('general');body.append(form);window.refreshConnectionVault=()=>{refreshKeys();refreshAuth()}
+function renderConnectionProfile(existing, selection = null, draft = null) {
+  if (existing?.storage?.browser || selection?.storage) return storageProfileDialog(existing, selection, draft);
+  if (existing?.protocol === "native" || selection?.protocol === "native") return nativeProfileDialog(existing, selection, draft);
+  const p = existing ? structuredClone(existing) : { id: crypto.randomUUID().replaceAll("-", ""), name: "", folder: "Connessioni", host: "", port: 22, username: "", protocol: "ssh", environment: "sviluppo", keyId: "", passwordId: "", authentication: "password", remoteDirectory: ".", notes: "", tags: "", jumpHost: "", tmuxSession: "", subsystem: "", favorite: false, tunnels: [] };
+  if (!existing && selection) {
+    Object.assign(p, draft || {}, { protocol: selection.protocol, localShell: selection.shell || "cmd", port: selection.protocol === "rdp" ? 3389 : selection.protocol === "vnc" ? 5900 : 22 });
+  }
+  const body = showModal(existing ? "Modifica connessione" : "Nuova connessione", "PROFILI / ACCESSO REMOTO", null, true);
+  modal.classList.add("connection-modal");
+  if (!existing && selection) {
+    const context = document.createElement("div");
+    context.className = "session-kind-header";
+    const name = document.createElement("strong");
+    name.textContent = selection.name + " / nuova sessione";
+    context.append(name, localizedButton("← Cambia tipo", () => sessionTypeDialog(Object.fromEntries([...new FormData(form)].filter(([key2]) => ["name", "folder", "notes", "tags", "host", "username"].includes(key2))))));
+    body.append(context);
+  }
+  const form = document.createElement("form");
+  form.noValidate = true;
+  form.className = "connection-form";
+  const tabs = document.createElement("div");
+  tabs.className = "connection-tabs";
+  tabs.setAttribute("role", "tablist");
+  interfaceAttribute(tabs, 'aria-label', "Configurazione connessione");
+  form.append(tabs);
+  const panels = /* @__PURE__ */ new Map();
+  for (const [id, label] of [["general", "Connessione"], ["local", "Shell locale"], ["auth", "Autenticazione"], ["terminal", "Terminale"], ["files", "SFTP"], ["desktop", "Desktop remoto"], ["network", "Rete e SSH"], ["hooks", "Automazione"], ["macro", "Macro di avvio"], ["notes", "Note"]]) {
+    const panel = document.createElement("section");
+    panel.id = "connection-" + id;
+    panel.className = "connection-panel";
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-label", label);
+    panel.hidden = id !== "general";
+    const grid = document.createElement("div");
+    grid.className = "form-grid";
+    panel.append(grid);
+    const tab = button(label, () => select(id));
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-controls", panel.id);
+    tab.setAttribute("aria-selected", String(id === "general"));
+    tab.dataset.tab = id;
+    tabs.append(tab);
+    panels.set(id, { panel, grid, tab });
+    form.append(panel);
+  }
+  function select(id) {
+    for (const [key2, value] of panels) {
+      value.panel.hidden = key2 !== id;
+      value.tab.setAttribute("aria-selected", String(key2 === id));
+      value.tab.tabIndex = key2 === id ? 0 : -1;
+    }
+  }
+  tabs.onkeydown = (e) => {
+    if (!["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    e.preventDefault();
+    const enabled = [...panels.values()].filter((x) => !x.tab.disabled && !x.tab.hidden);
+    const index = enabled.findIndex((x) => x.tab === document.activeElement);
+    const next = enabled[(index + (e.key === "ArrowRight" ? 1 : -1) + enabled.length) % enabled.length];
+    select(next.tab.dataset.tab);
+    next.tab.focus();
+  };
+  function check(parent, label, name, checked) {
+    const row = document.createElement("label");
+    row.className = "check-label";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = name;
+    input.checked = !!checked;
+    row.append(input, label);
+    parent.append(row);
+    return input;
+  }
+  const general = panels.get("general").grid;
+  field(general, uiText("Nome"), "name", p.name);
+  const folder = field(general, uiText("Cartella"), "folder", p.folder, "text", folderChoices(p.folder));
+  const newFolder = localizedButton("＋ Nuova cartella", () => {
+    folderCreate.hidden = !folderCreate.hidden;
+  });
+  general.append(newFolder);
+  const folderCreate = document.createElement("div");
+  folderCreate.className = "folder-create wide";
+  folderCreate.hidden = true;
+  const folderPath = field(folderCreate, uiText("Cartella / sottocartella"), "newFolderPath", "");
+  folderCreate.append(localizedButton("Crea e seleziona", async () => {
+    const path = folderPath.value.trim();
+    if (!path) return;
+    update(await call("folderCreate", { path }));
+    folder.replaceChildren();
+    for (const [v, t] of folderChoices(path)) {
+      const option = document.createElement("option");
+      option.value = v;
+      option.textContent = t;
+      folder.append(option);
+    }
+    folder.value = path;
+    folderCreate.hidden = true;
+  }));
+  general.append(folderCreate);
+  const protocol = field(general, uiText("Tipo di sessione"), "protocol", p.protocol, "text", [["ssh", "SSH + SFTP"], ["sftp", "SFTP"], ["rdp", "Desktop remoto / RDP"], ["vnc", "VNC"], ["local", "Sessione locale"]]);
+  if (selection && !existing) protocol.disabled = true;
+  field(general, uiText("Ambiente"), "environment", p.environment, "text", [["sviluppo", "Sviluppo"], ["test", "Test"], ["produzione", "Produzione"]]);
+  const host = field(general, uiText("Host / indirizzo"), "host", p.host);
+  const port = field(general, uiText("Porta"), "port", p.port, "number");
+  port.min = 1;
+  port.max = 65535;
+  const username = field(general, uiText("Username"), "username", p.username);
+  field(general, uiText("Tag"), "tags", p.tags);
+  const favorite = check(panels.get("general").panel, "Preferito", "favorite", p.favorite);
+  const machine = field(general, uiText("Macchina dalla rubrica"), "machineSelect", "", "text", [["", "Inserisci un indirizzo oppure scegli una macchina"], ...(state.data.machines || []).map((m) => [m.id, m.name + " / " + m.host + ":" + m.port])]);
+  machine.onchange = () => {
+    const entry = (state.data.machines || []).find((m) => m.id === machine.value);
+    if (entry) {
+      host.value = entry.host;
+      port.value = entry.port;
+    }
+  };
+  const addMachine = check(panels.get("general").panel, "Aggiungi a rubrica", "addToAddressBook", false);
+  const machineName = field(general, uiText("Nome della macchina in rubrica"), "machineName", "");
+  machineName.parentElement.hidden = true;
+  addMachine.onchange = () => {
+    machineName.parentElement.hidden = !addMachine.checked;
+    machineName.disabled = !addMachine.checked;
+    machineName.required = addMachine.checked;
+  };
+  const local = panels.get("local").grid;
+  const shell = field(local, uiText("Shell"), "localShell", p.localShell || "cmd", "text", [["cmd", "CMD"], ["powershell", "Windows PowerShell"], ["pwsh", "PowerShell 7"], ["wsl", "WSL / Linux"]]);
+  const distribution = field(local, uiText("Distribuzione WSL"), "wslDistribution", p.wslDistribution || "", "text", [["", "Distribuzione predefinita"], ...p.wslDistribution ? [[p.wslDistribution, p.wslDistribution]] : []]);
+  const initial = field(local, uiText("Cartella iniziale"), "startupDirectory", p.startupDirectory || "");
+  const chooseInitial = localizedButton("Scegli cartella iniziale", async () => {
+    const path = await call("localShellFolder");
+    if (path) initial.value = path;
+  });
+  local.append(chooseInitial);
+  const startup = field(local, uiText("Comandi di avvio (facoltativi)"), "startupCommands", p.startupCommands || "", "textarea");
+  startup.maxLength = 8192;
+  startup.parentElement.className = "wide";
+  const available = document.createElement("p");
+  available.className = "notice wide";
+  local.append(available);
+  notice(panels.get("local").panel, "I comandi partono a ogni nuova apertura, anche da workspace. Sono salvati in chiaro: non inserire password o token. Windows PowerShell e PowerShell 7 partono senza caricare il profilo personale.");
+  let catalog = null, loadingCatalog = false;
+  function refreshLocal() {
+    visible(distribution, shell.value === "wsl");
+    chooseInitial.hidden = shell.value === "wsl";
+    initial.placeholder = shell.value === "wsl" ? "Percorso Linux, ad esempio /home/utente/progetti · vuoto: home" : "Percorso Windows assoluto · vuoto: cartella utente";
+    available.textContent = shell.value === "wsl" ? "WSL usa soltanto le distribuzioni gia installate. Nessuna installazione automatica." : "La shell viene eseguita sul PC con i tuoi permessi, nella scheda corrente.";
+    if (catalog) {
+      const selected = catalog.shells.find((x) => x.id === shell.value);
+      available.textContent += selected?.available ? " · " + selected.name + " disponibile" : " · Shell non disponibile";
+      if (shell.value === "wsl" && !catalog.distributions.length) available.textContent += " · Nessuna distribuzione rilevata";
+      if (catalog.warning) available.textContent += " · " + catalog.warning;
+    }
+  }
+  async function loadLocalCatalog() {
+    if (catalog || loadingCatalog) return;
+    loadingCatalog = true;
+    try {
+      catalog = await call("localAvailability");
+      const selected = distribution.value;
+      distribution.replaceChildren(new Option("Distribuzione predefinita", ""));
+      for (const name of catalog.distributions) distribution.append(new Option(name, name));
+      if (selected && !catalog.distributions.includes(selected)) distribution.append(new Option(selected + " (non disponibile)", selected));
+      distribution.value = selected;
+      for (const option of shell.options) {
+        const choice = catalog.shells.find((x) => x.id === option.value);
+        option.disabled = choice?.available === false;
+      }
+      refreshLocal();
+    } catch {
+    } finally {
+      loadingCatalog = false;
+    }
+  }
+  shell.onchange = refreshLocal;
+  const auth = panels.get("auth").grid;
+  const method = field(auth, uiText("Metodo di autenticazione"), "authentication", p.authentication === "auto" ? p.keyId ? "key" : "password" : p.authentication, "text", [["password", "Password"], ["key", "Chiave SSH"], ["keyboard-interactive", "Autenticazione interattiva / 2FA"], ["openssh-agent", "Agent OpenSSH / FIDO"], ["pageant", "PuTTY Pageant"]]);
+  const vaultState = document.createElement("p");
+  vaultState.className = "notice wide";
+  auth.append(vaultState);
+  const unlock = button(state.vault.exists ? "Sblocca archivio" : "Crea archivio", async () => {
+    update(await call("vaultUnlock"));
+    refreshKeys();
+    refreshAuth();
+  });
+  auth.append(unlock);
+  const password = field(auth, uiText("Password"), "password", "", "password");
+  password.autocomplete = "new-password";
+  password.maxLength = 8192;
+  password.placeholder = p.passwordId ? "Password salvata · lascia vuoto per mantenerla" : "Inserisci la password oppure lascia vuoto per chiederla alla connessione";
+  const remember = check(panels.get("auth").panel, "Salva la password nell’archivio cifrato", "rememberPassword", !!p.passwordId);
+  const key = field(auth, uiText("Chiave SSH nell’archivio"), "keyId", p.keyId, "text", []);
+  const phrase = field(auth, uiText("Passphrase della chiave (solo per questa apertura dell’app)"), "keyPassphrase", "", "password");
+  phrase.autocomplete = "new-password";
+  phrase.maxLength = 8192;
+  const agent = field(auth, uiText("Impronta dell’identità agent (opzionale)"), "agentFingerprint", p.agentFingerprint || "");
+  const fallback = check(panels.get("auth").panel, "Consenti autenticazione interattiva come fallback", "keyboardFallback", p.keyboardFallback);
+  const authHint = document.createElement("p");
+  authHint.className = "notice";
+  panels.get("auth").panel.append(authHint);
+  function refreshKeys() {
+    const selected = key.value || p.keyId;
+    key.replaceChildren();
+    for (const [v, t] of [["", "Seleziona una chiave"], ...(state.vault.keys || []).filter((k) => k.kind !== "ssh-native-key").map((k) => [k.id, k.name])]) {
+      const option = document.createElement("option");
+      option.value = v;
+      option.textContent = t;
+      key.append(option);
+    }
+    if (selected && ![...key.options].some((o) => o.value === selected)) {
+      const option = document.createElement("option");
+      option.value = selected;
+      option.textContent = state.vault.unlocked ? "Chiave non disponibile" : "Chiave associata · sblocca l’archivio";
+      key.append(option);
+    }
+    key.value = selected;
+  }
+  function visible(input, yes) {
+    input.parentElement.hidden = !yes;
+    input.disabled = !yes;
+  }
+  function refreshAuth() {
+    const desktop = ["rdp", "vnc"].includes(protocol.value);
+    if (desktop) method.value = "password";
+    for (const option of method.options) option.disabled = desktop && option.value !== "password";
+    const isPassword = method.value === "password", isKey = method.value === "key", isAgent = ["openssh-agent", "pageant"].includes(method.value);
+    visible(password, isPassword);
+    visible(key, isKey);
+    visible(phrase, isKey);
+    visible(agent, isAgent);
+    visible(remember, isPassword);
+    visible(fallback, !desktop && method.value !== "keyboard-interactive");
+    key.disabled = !isKey || !state.vault.unlocked;
+    vaultState.textContent = state.vault.unlocked ? "Archivio sbloccato" + (p.passwordId ? " · password della connessione salvata" : "") : "Archivio bloccato" + (p.passwordId ? " · sbloccalo per usare la password salvata" : "");
+    unlock.hidden = state.vault.unlocked;
+    unlock.textContent = state.vault.exists ? "Sblocca archivio" : "Crea archivio";
+    authHint.textContent = isPassword ? "La password non viene mai scritta nel profilo. Se non la salvi, resta disponibile soltanto fino alla chiusura dell’app." : isKey ? "La chiave è selezionata per nome dall’archivio. Lascia la passphrase vuota per una chiave non protetta: non sarà richiesta alla connessione." : isAgent ? "La firma viene richiesta all’agent o al dispositivo; il client non esporta la chiave privata." : "Le richieste del server vengono mostrate durante la connessione.";
+  }
+  method.onchange = refreshAuth;
+  const terminal = panels.get("terminal").grid;
+  field(terminal, uiText("Sessione tmux (opzionale)"), "tmuxSession", p.tmuxSession || "");
+  notice(panels.get("terminal").panel, "Terminale UTF-8 / xterm. Il nome tmux riapre una sessione persistente soltanto se tmux è già presente sul server.");
+  field(panels.get("files").grid, "Cartella locale iniziale (vuoto: Download)", "localDirectory", p.localDirectory || "");
+  const rememberDirs = check(panels.get("files").panel, "Ricorda le ultime cartelle locali e remote", "rememberFileDirectories", p.rememberFileDirectories !== false);
+  field(panels.get("files").grid, "Cartella remota iniziale", "remoteDirectory", p.remoteDirectory);
+  const subsystem = field(panels.get("files").grid, "Comando SFTP personalizzato (opzionale)", "subsystem", p.subsystem);
+  interfaceAttribute(subsystem, 'placeholder', "sudo -n /usr/lib/openssh/sftp-server");
+  notice(panels.get("files").panel, "Vuoto: SFTP standard. Il comando remoto deve produrre soltanto il protocollo SFTP, senza banner e senza password sudo interattiva.");
+  const rdpOptions = renderRdpOptions(panels.get("desktop").panel, p.rdp || {});
+  const domain = field(panels.get("desktop").grid, "Dominio Windows (opzionale)", "domain", p.domain || "");
+  const viewOnly = check(panels.get("desktop").panel, "Solo visualizzazione VNC", "viewOnly", p.viewOnly);
+  const clipboard = check(panels.get("desktop").panel, "Condividi gli appunti con il computer remoto", "shareClipboard", p.shareClipboard);
+  notice(panels.get("desktop").panel, "RDP usa il componente Microsoft con verifica del server e NLA. Tramite SSH il certificato puo segnalare il nome loopback: verifica il certificato del server di destinazione; la verifica non viene disattivata. VNC usa il protocollo classico: per cifrare il traffico scegli un jump host SSH oppure una rete fidata.");
+  const network = panels.get("network").grid;
+  const jumps = [["", "Connessione diretta"], ...state.data.profiles.filter((x) => x.id !== p.id && ["ssh", "sftp"].includes(x.protocol)).map((x) => [x.id, x.name + " / " + x.host])];
+  if (p.jumpHost && !jumps.some((x) => x[0] === p.jumpHost)) jumps.push([p.jumpHost, "Jump host non disponibile"]);
+  const jump = field(network, uiText("Jump host / profilo"), "jumpHost", p.jumpHost, "text", jumps);
+  const timeout = field(network, uiText("Timeout connessione (secondi)"), "connectTimeoutSeconds", p.connectTimeoutSeconds || 20, "number");
+  timeout.min = 5;
+  timeout.max = 120;
+  const keepAlive = field(network, uiText("Keep-alive SSH (secondi · 0 disattiva)"), "keepAliveSeconds", p.keepAliveSeconds ?? 25, "number");
+  keepAlive.min = 0;
+  keepAlive.max = 3600;
+  const quantum = check(panels.get("network").panel, "Richiedi scambio chiavi post-quantistico", "requirePostQuantumKex", p.requirePostQuantumKex);
+  notice(panels.get("network").panel, "Ogni jump host usa le proprie credenziali e la propria verifica dell’impronta.");
+  const hookPanel = panels.get("hooks").panel;
+  notice(hookPanel, uiText("Hook per connessioni manuali e loro chiusura, anche in caso di caduta della rete. Esclusi riconnessioni automatiche e aggiornamenti. Le righe sono salvate nel profilo: non inserire password o token. Prima connessione locale: errore interrompe il collegamento; gli altri errori sono segnalati senza annullare la connessione."));
+  const hooks = renderHookEditor(hookPanel, p.hooks || []);
+  const startupMacro = renderStartupMacroEditor(panels.get("macro").panel, p);
+  const notes = field(panels.get("notes").grid, "Note della connessione", "notes", p.notes, "textarea");
+  notes.parentElement.className = "wide";
+  protocol.onchange = () => {
+    if ([22, 3389, 5900].includes(Number(port.value))) port.value = protocol.value === "rdp" ? 3389 : protocol.value === "vnc" ? 5900 : 22;
+    refreshProtocol();
+  };
+  function sshProtocol() {
+    return ["ssh", "sftp"].includes(protocol.value);
+  }
+  function refreshProtocol() {
+    const isLocal = protocol.value === "local";
+    panels.get("macro").tab.hidden = !["local", "ssh"].includes(protocol.value);
+    $("modal-kicker").textContent = isLocal ? "PROFILI / SESSIONE LOCALE" : "PROFILI / ACCESSO REMOTO";
+    for (const input of [host, port, username, machine, machineName]) visible(input, !isLocal && (input !== machineName || addMachine.checked));
+    visible(addMachine, !isLocal);
+    panels.get("local").tab.hidden = !isLocal;
+    for (const id of ["auth", "terminal", "files", "desktop", "network", "hooks"]) panels.get(id).tab.hidden = isLocal || (protocol.value === "rdp" || protocol.value === "vnc") && ["terminal", "files", "hooks"].includes(id) || sshProtocol() && id === "desktop";
+    if (isLocal) {
+      refreshLocal();
+      loadLocalCatalog();
+    }
+    const ssh = ["ssh", "sftp"].includes(protocol.value);
+    username.disabled = protocol.value === "vnc";
+    for (const id of ["terminal", "files"]) panels.get(id).tab.disabled = !ssh;
+    domain.disabled = protocol.value !== "rdp";
+    viewOnly.disabled = protocol.value !== "vnc";
+    jump.disabled = isLocal;
+    visible(keepAlive, ssh);
+    visible(quantum, ssh);
+    panels.get("network").tab.textContent = ssh ? "Rete e SSH" : "Rete";
+    visible(domain, protocol.value === "rdp");
+    visible(viewOnly, protocol.value === "vnc");
+    refreshAuth();
+  }
+  const actions = document.createElement("div");
+  actions.className = "connection-actions";
+  if (existing) {
+    actions.append(localizedButton("Salva modello di connessione", () => saveConnectionTemplateDialog(existing)), localizedButton("Verifica guidata della connessione", () => connectionGuideDialog(existing)), localizedButton("Duplica", () => profileDialog({ ...p, id: crypto.randomUUID().replaceAll("-", ""), name: p.name + " — copia", passwordId: "" })), localizedButton("Elimina", async () => {
+      update(await call("deleteProfile", { profileId: p.id }));
+      modal.close();
+    }, "danger"));
+  }
+  actions.append(localizedButton("Annulla", () => modal.close()));
+  const save = document.createElement("button");
+  save.textContent = uiText("Salva connessione");
+  save.className = "primary";
+  actions.append(save);
+  form.append(actions);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    save.disabled = true;
+    const values = Object.fromEntries(new FormData(form));
+    delete values.newFolderPath;
+    delete values.machineSelect;
+    try {
+      const payload = { ...p, ...values, rdp: rdpOptions(), hooks: hooks(), startupMacro: ["local", "ssh"].includes(protocol.value) ? startupMacro() : null, addToAddressBook: addMachine.checked, rememberFileDirectories: rememberDirs.checked, port: Number(values.port ?? p.port), connectTimeoutSeconds: Number(values.connectTimeoutSeconds || p.connectTimeoutSeconds || 20), keepAliveSeconds: Number(values.keepAliveSeconds ?? p.keepAliveSeconds ?? 25), favorite: favorite.checked, keyboardFallback: fallback.checked && !fallback.disabled, rememberPassword: method.value === "password" ? remember.checked : !!p.passwordId, requirePostQuantumKex: quantum.checked && !quantum.disabled, viewOnly: viewOnly.checked && !viewOnly.disabled, shareClipboard: clipboard.checked, password: password.disabled ? "" : password.value, keyPassphrase: phrase.disabled ? "" : phrase.value };
+      if (protocol.value === "local") Object.assign(payload, { host: "", username: "", port: 22, authentication: "auto", keyId: "", passwordId: "", rememberPassword: false, password: "", keyPassphrase: "", jumpHost: "", tmuxSession: "", subsystem: "", hooks: [], tunnels: [], addToAddressBook: false, requirePostQuantumKex: false });
+      update(await call("saveProfile", payload));
+      password.value = phrase.value = "";
+      modal.close();
+      toast(uiText("Connessione salvata"));
+    } catch (error) {
+      if (error instanceof StartupMacroValidationError) toast(error.message, true);
+      else {
+        let issue = form.querySelector(".connection-save-error");
+        if (!issue) {
+          issue = document.createElement("p");
+          issue.className = "connection-save-error";
+          issue.setAttribute("role", "alert");
+          form.append(issue);
+        }
+        issue.textContent = error.message || uiText("Operazione non riuscita.");
+        issue.scrollIntoView({ block: "nearest" });
+      }
+    } finally {
+      save.disabled = false;
+    }
+  };
+  refreshKeys();
+  refreshProtocol();
+  select("general");
+  body.append(form);
+  window.refreshConnectionVault = () => {
+    refreshKeys();
+    refreshAuth();
+  };
 }

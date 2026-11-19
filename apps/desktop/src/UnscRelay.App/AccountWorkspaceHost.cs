@@ -9,11 +9,12 @@ public partial class MainWindow
  {
   var spaces=new AccountWorkspaces(rootDataPath);var index=spaces.Load();
   if(action=="workspaceList")return index.Accounts.Select(a=>{
-   var state=new AccountSyncStore(spaces.DirectoryFor(a.Id)).Load();return new{a.Id,a.Email,a.Name,current=a.Id==index.Active,connected=state.Activated&&state.Owner==a.Owner};
+   var state=new AccountSyncStore(spaces.DirectoryFor(a.Id)).Load();return new{a.Id,a.Email,a.Name,a.Alias,a.Color,current=a.Id==index.Active,connected=state.Activated&&(state.AccessToken.Length>0||state.RefreshToken.Length>0)&&state.Owner==a.Owner};
   }).ToArray();
   if(!await cloudGate.WaitAsync(0))throw new InvalidOperationException("Attendi la sincronizzazione in corso.");
   try
   {
+   if(action=="workspaceCustomize"){spaces.Customize(p.GetProperty("id").GetGuid(),S(p,"alias"),S(p,"color"));return true;}
    if(action=="workspaceForget"){var id=p.GetProperty("id").GetGuid();var saved=new AccountSyncStore(spaces.DirectoryFor(id)).Load();if(saved.Activated)throw new InvalidOperationException("Disconnetti prima questo account dall’app.");spaces.Forget(id);return true;}
    if(smokeTest)throw new InvalidOperationException("Il collaudo isolato non riavvia l’app su dati personali.");
    if(startupSequencePlaying||activeOperations>1||transferActive||QueueBusy||EditorsBusy||ExportBusy||helloBusy||certificateRenewBusy||conversionOperation||keyGenerationBusy||connectingSessions.Count>0||accessBusy)throw new InvalidOperationException("Completa o interrompi le operazioni in corso prima di cambiare account.");

@@ -70,6 +70,7 @@ internal sealed class RdpView : Forms.AxHost
         settings.ClearTextPassword = password;
     }
     public void Connect(ConnectionProfile profile, string password, int width, int height) { Configure(profile, password, width, height); ((dynamic)Component).Connect(); }
+    public bool TryReturnToTabForPresentation(){try{dynamic component=Component;if((bool)component.FullScreen)component.FullScreen=false;return !(bool)component.FullScreen;}catch(Exception error)when(error is COMException or InvalidOperationException){return false;}}
     public void ReturnToTab() { try { if (((dynamic)Component).FullScreen) ((dynamic)Component).FullScreen = false; } catch (Exception ex) when (ex is COMException or InvalidOperationException) { } }
     public void Disconnect() { ReturnToTab(); try { ((dynamic)Component).Disconnect(); } catch (Exception ex) when (ex is COMException or InvalidOperationException) { } }
 }
@@ -115,7 +116,7 @@ public partial class MainWindow
     {
         foreach (var (id, session) in desktopSessions)
         {
-            if (!desktopRects.TryGetValue(id, out var rect) || rect.Width < 10 || rect.Height < 10) { session.Rdp?.ReturnToTab(); session.Host.Visibility = Visibility.Hidden; continue; }
+            if (nativePresentationMode||OperationsLocked||!desktopRects.TryGetValue(id, out var rect) || rect.Width < 10 || rect.Height < 10) { session.Rdp?.ReturnToTab(); session.Host.Visibility = Visibility.Hidden; continue; }
             var windowId=desktopWindows.GetValueOrDefault(id,"");var layer=windowId.Length==0?DesktopLayer:detachedWindows.TryGetValue(windowId,out var floating)?floating.DesktopLayer:null;
             if(layer==null){session.Rdp?.ReturnToTab();session.Host.Visibility=Visibility.Hidden;continue;}
             if(session.Host.Parent is Canvas oldLayer&&oldLayer!=layer)oldLayer.Children.Remove(session.Host);if(session.Host.Parent==null)layer.Children.Add(session.Host);
@@ -126,11 +127,11 @@ public partial class MainWindow
     }
     async Task<object> ConnectDesktop(ConnectionProfile profile, string id)
     {
-        if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
+        var generation=authenticationGeneration;RequireOperationSession(generation);
         DesktopRoutes.Validate(profile, data.Profiles);
         var password = ConnectionPassword(profile);
         var route = await DesktopRoutes.OpenAsync(profile, data.Profiles, (p, host, targetPort) => CreateAuthenticatedSession(p, host, targetPort, Guid.NewGuid().ToString("N")));
-        if(CriticalUpdateRequired){route.Dispose();throw new OperationCanceledException("Aggiornamento critico richiesto.");}
+        if(OperationsLocked||generation!=authenticationGeneration){route.Dispose();throw new OperationCanceledException("Aggiornamento critico richiesto.");}
         var endpoint = route.Host; var port = route.Port;
         var hostView = new WindowsFormsHost { Width = 800, Height = 500 }; DesktopSession? session = null;
         void Status(string text, bool connected) { if (session?.Disposed != true) Emit("desktopStatus", new { sessionId = id, text, connected, pending = text.StartsWith("RDP: connessione", StringComparison.Ordinal) }); }
@@ -153,12 +154,12 @@ public partial class MainWindow
                 control.Connected += (_, _) => Status("VNC connesso", true); control.ConnectionFailed += (_, _) => Status("Connessione VNC non riuscita: verifica password e compatibilità del server.", false); control.Closed += (_, _) => Status("VNC disconnesso", false);
                 var socket = new TcpClient { ReceiveTimeout = profile.ConnectTimeoutSeconds * 1000, SendTimeout = profile.ConnectTimeoutSeconds * 1000 }; session.Socket = socket;
                 await socket.ConnectAsync(endpoint, port).WaitAsync(TimeSpan.FromSeconds(profile.ConnectTimeoutSeconds));
-                if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
+                RequireOperationSession(generation);
                 var options = new VncClientConnectOptions { Password = password.ToCharArray(), AutoReconnect = false, ShareDesktop = true };
                 try { await Task.Run(() => control.Client.Connect(socket.GetStream(), options)); }
                 finally { Array.Clear(options.Password); password = ""; }
             }
-            if(CriticalUpdateRequired)throw new OperationCanceledException("Aggiornamento critico richiesto.");
+            RequireOperationSession(generation);
             return new { sessionId = id, filesAvailable = false, desktop = true, pending = profile.Protocol == "rdp" };
         }
         catch

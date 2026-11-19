@@ -19,7 +19,7 @@ public partial class MainWindow
                 var challenge=vault.PrepareWindowsHelloIdentity();var signature=await WindowsHelloService.SignAsync(challenge);
                 try{vault.VerifyWindowsHelloIdentity(challenge,signature);}finally{CryptographicOperations.ZeroMemory(signature);}
                 if(generation!=authenticationGeneration)throw new OperationCanceledException("Sessione bloccata. Ripeti l’abilitazione.");
-                AccountUnlocks.ConfirmHello(cloud.State.Owner,challenge.KeyName);return Snapshot();
+                AccountUnlocks.ConfirmHello(cloud.State.Owner,challenge.KeyName);new WindowsHelloRegistration(dataPath).Remember(vault,cloud.State);return Snapshot();
             }
             var prepared = vault.PrepareWindowsHello();
             Emit("helloPending", new { });
@@ -27,7 +27,7 @@ public partial class MainWindow
             try {
                 if(generation!=authenticationGeneration)throw new OperationCanceledException("Sessione bloccata. Ripeti l’abilitazione.");
                 vault.EnableWindowsHelloForUnlockedVault(proof.Challenge, proof.Signature);committed=true;
-                AccountUnlocks.ConfirmHello(cloud.State.Owner,proof.Challenge.KeyName);
+                AccountUnlocks.ConfirmHello(cloud.State.Owner,proof.Challenge.KeyName);new WindowsHelloRegistration(dataPath).Remember(vault,cloud.State);
             }
             finally { CryptographicOperations.ZeroMemory(proof.Signature); if (!committed) await WindowsHelloService.DeleteAsync(proof.Challenge.KeyName); }
             return Snapshot();
@@ -46,8 +46,8 @@ public partial class MainWindow
             var signature = await WindowsHelloService.SignAsync(challenge);
             try { await Task.Run(() => vault.UnlockWindowsHello(challenge, signature)); }
             finally { CryptographicOperations.ZeroMemory(signature); }
-            if(generation!=authenticationGeneration){vault.Lock();throw new OperationCanceledException("La sessione Windows è stata bloccata. Ripeti l’accesso.");}
-            return Snapshot();
+            if(generation!=authenticationGeneration){LockVault();throw new OperationCanceledException("La sessione Windows è stata bloccata. Ripeti l’accesso.");}
+            new WindowsHelloRegistration(dataPath).Remember(vault,cloud.State);return Snapshot();
         }
         finally { helloBusy = false; if(!accessBusy)Emit("helloFinished", new { }); }
     }

@@ -21,3 +21,13 @@ for n,(title,detail) in enumerate([('01  CONNETTI','SSH  /  RDP  /  VNC'),('02  
  y=1930+n*150;d.rectangle((96,y,104,y+85),fill=(167,190,119));d.text((136,y),title,font=font(32,True),fill=(206,221,192));d.text((136,y+52),detail,font=font(26),fill=(138,162,141))
 d.text((100,2420),'LOCAL / PERSONAL EDITION',font=font(28),fill=(141,162,136));im.save(out/'wizard.png')
 small=Image.new('RGBA',(440,440),(13,25,28,255));mark=logo.resize((350,350),Image.Resampling.LANCZOS);small.alpha_composite(mark,(45,45));small.save(out/'header.png')
+
+# Low-detail full-window background keeps progress labels legible on every page.
+bg=Image.new('RGB',(1600,1000));pixels=bg.load()
+for y in range(bg.height):
+ for x in range(bg.width):
+  glow=max(0,1-((x-1400)/1800)**2-((y-200)/1300)**2)
+  pixels[x,y]=(int(7+glow*5),int(16+glow*10),int(17+glow*8))
+draw=ImageDraw.Draw(bg)
+for y in range(40,1000,120):draw.line((1200,y,1600,y-120),fill=(25,43,38),width=2)
+bg.save(out/'background.png')

@@ -6,7 +6,7 @@ namespace UnscRelay.Core;
 public static class UpdateBackup
 {
     // Explicit allowlist: no WebView cache, downloads or plaintext private key exports.
-    public static readonly string[] DataFiles = ["profiles.json", "keys.vault", "hostkeys.json", "github-token.dpapi", "transfers.json", "account-sync.dpapi", "account-unlock.dpapi", "accounts.dpapi"];
+    public static readonly string[] DataFiles = ["profiles.json", "interface-language.json", "keys.vault", "hostkeys.json", "github-token.dpapi", "transfers.json", "account-sync.dpapi", "account-unlock.dpapi", "account-hello.dpapi", "accounts.dpapi"];
     public static string Create(string dataDirectory, string version)
     {
         dataDirectory = LocalDataFiles.Root(dataDirectory);

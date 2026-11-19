@@ -17,6 +17,7 @@ public static class VaultPasswordPolicy
 public sealed partial class KeyVault
 {
     const string HelloDomain = "UNSC Relay / local archive wrapping / v1 / ";
+    internal WindowsHelloChallenge? AuthenticatedWindowsHello(){lock(_gate){RequireUnlocked();return _windowsHello?.Challenge;}}
     public WindowsHelloChallenge? WindowsHello() { lock (_gate) return Exists ? ReadEnvelope().WindowsHello?.Challenge : null; }
     public WindowsHelloChallenge PrepareWindowsHello()
     {

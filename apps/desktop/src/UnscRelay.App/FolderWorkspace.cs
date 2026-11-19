@@ -50,6 +50,7 @@ public partial class MainWindow
     }
     async Task<object> EnqueueFolderPlan(JsonElement payload, bool confirm = true)
     {
+        var generation=authenticationGeneration;RequireOperationSession(generation);
         if(recoveryTasks.Count>0)throw new IOException("Attendi il ripristino prima di avviare una sincronizzazione.");
         var id = S(payload, "id"); if (!folderPlans.TryGetValue(id, out var plan) || DateTime.UtcNow - plan.Created > TimeSpan.FromMinutes(10)) throw new IOException("Anteprima scaduta. Confronta nuovamente le cartelle.");
         var session = Session(payload); if (session.Id != plan.SessionId || !ReferenceEquals(session, plan.Owner)) throw new IOException("La sessione del confronto è cambiata.");
@@ -64,7 +65,7 @@ public partial class MainWindow
             if (!item.Transferable || source == null || source.Link) throw new IOException("Elemento non trasferibile: " + item.Relative);
             var local = FolderSync.LocalChild(plan.LocalRoot, item.Relative); var remote = plan.RemoteRoot.TrimEnd('/') + "/" + item.Relative;
             FolderSync.CheckLocalParents(Path.GetDirectoryName(local)!);
-            var remoteNow = await session.StatAsync(remote);
+            var remoteNow = await session.StatAsync(remote);RequireOperationSession(generation);
             var localExists = File.Exists(local) || Directory.Exists(local);
             var localNow = localExists ? new FileStamp(local, Directory.Exists(local), File.Exists(local) ? new FileInfo(local).Length : 0, File.GetLastWriteTimeUtc(local)) : null;
             bool Same(SyncEntry? before, FileStamp? now) => before == null ? now == null : now != null && before.Directory == now.Directory && (before.Directory || before.Size == now.Size && before.Modified == now.Modified);
@@ -75,7 +76,7 @@ public partial class MainWindow
         if (fileJobs.Count + jobs.Count > 5000) throw new IOException("Svuota la coda prima di sincronizzare.");
         foreach (var job in jobs) if (fileJobs.Values.Any(j => j.Status is not ("Completato" or "Saltato") && (upload ? j.Request.Upload && j.SessionId == job.SessionId && j.Request.Remote == job.Request.Remote : !j.Request.Upload && j.Request.Local.Equals(job.Request.Local, StringComparison.OrdinalIgnoreCase)))) throw new IOException("Una destinazione è già nella coda.");
         if (confirm && !Confirm($"Trasferire {jobs.Count} elementi {(upload ? "verso il server" : "verso il PC")}? I file diversi selezionati verranno sostituiti. Nessuna eliminazione automatica.")) return new { cancelled = true };
-        folderPlans.Remove(id); foreach (var job in jobs) fileJobs.Add(job.Id, job);
+        var productionApproved=upload&&ConfirmProductionOperation(session.Profile,"Sincronizzazione dei file",jobs.Count,plan.RemoteRoot);RequireOperationSession(generation);folderPlans.Remove(id); foreach (var job in jobs){job.ProductionApproved=productionApproved;fileJobs.Add(job.Id, job);}
         foreach (var job in jobs) job.Running = RunJob(job, false); EmitQueue(); return new { queued = jobs.Count };
     }
 }

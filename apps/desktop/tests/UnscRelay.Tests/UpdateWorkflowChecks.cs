@@ -24,8 +24,12 @@ internal static class UpdateWorkflowChecks
         File.WriteAllText(Path.Combine(directory,"account-sync.dpapi"),"synthetic protected account state");
         File.WriteAllText(Path.Combine(directory,"account-unlock.dpapi"),"synthetic protected device state");
         new AccountWorkspaces(directory).Save(new AccountWorkspaceIndex());
+        File.WriteAllText(Path.Combine(directory, "interface-language.json"), "{\"language\":\"fr\"}");
+        var presentDataFiles = UpdateBackup.DataFiles.Where(name => File.Exists(Path.Combine(directory, name))).ToArray();
+        var absentDataFiles = UpdateBackup.DataFiles.Except(presentDataFiles).ToArray();
         var backup = UpdateBackup.Create(directory, "0.1.3");
-        Check(UpdateBackup.DataFiles.All(name => File.ReadAllBytes(Path.Combine(directory, name)).SequenceEqual(File.ReadAllBytes(Path.Combine(backup, name)))), "Pre-update backup preserves all data and encrypted credential byte for byte");
+        Check(presentDataFiles.All(name => File.ReadAllBytes(Path.Combine(directory, name)).SequenceEqual(File.ReadAllBytes(Path.Combine(backup, name)))), "Pre-update backup preserves all data and encrypted credential byte for byte");
+        Check(absentDataFiles.All(name => !File.Exists(Path.Combine(backup, name))), "Legacy accounts without optional Hello metadata do not acquire synthetic backup files");
         Check(!Directory.Exists(Path.Combine(backup, "WebView")) && File.Exists(Path.Combine(backup, "manifest.json")), "Update backup uses explicit data allowlist and manifest");
         Check(!JsonSerializer.Serialize(data, ProfileStore.Json).Contains(token), "Profile export never includes the update credential");
         tokenStore.Delete(); Check(!tokenStore.Exists && store.Load().Profiles.Count == 1 && File.Exists(Path.Combine(directory, "keys.vault")), "Removing token preserves profiles and vault");

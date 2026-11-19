@@ -35,6 +35,7 @@ public sealed record ConnectionProfile
     public string LocalDirectory { get; set; } = "";
     public bool RememberFileDirectories { get; set; } = true;
     public string Notes { get; set; } = "";
+    public ConnectionOperations Operations {get;set;}=new();
     public string Tags { get; set; } = "";
     public string JumpHost { get; set; } = "";
     public string Subsystem { get; set; } = "";
@@ -53,6 +54,7 @@ public sealed record ConnectionProfile
         if (string.IsNullOrWhiteSpace(Username) && Protocol is "ssh" or "sftp") throw new ArgumentException("Indica l'utente SSH.");
         if (Username.Any(char.IsControl)) throw new ArgumentException("Utente non valido.");
         if (Protocol is not ("ssh" or "sftp" or "rdp" or "vnc" or "local" or "native")) throw new ArgumentException("Protocollo non supportato.");
+        if(Operations==null)throw new ArgumentException("Note operative non valide.");Operations.Validate();
         if (Native == null || Rdp == null || Storage == null || Hooks == null || Tunnels == null) throw new ArgumentException("Opzioni sessione mancanti.");
         if (Protocol == "native") {Native.Validate();Storage.Validate(Native.Kind);}
         if(Storage.Browser&&(Protocol!="native"||string.IsNullOrWhiteSpace(Username)||JumpHost.Length>0||KeyId.Length>0||Hooks.Count>0||Tunnels.Count>0))throw new ArgumentException("Browser storage: utente/access key richiesto, senza chiavi SSH, hook o tunnel.");
@@ -114,14 +116,18 @@ public sealed record Workspace(string Name, string Layout, List<string> ProfileI
         if(ActivePaneIndex!=null&&(ActivePaneIndex<0||ActivePaneIndex>=ProfileIds.Count))throw new ArgumentException("Scheda attiva del workspace non valida.");
     }
 }
-public sealed record UserSettings(bool StartupVideo = true, bool ShutdownVideo = true, double StartupVolume = .8, double ShutdownVolume = 1, int AutoLockMinutes = 10, int RecordingRetentionDays = 0, bool RequireAppAuthentication = false, bool AssistantApiEnabled = false, bool AppMusicEnabled = true, double AppMusicVolume = .35, string ExternalEditor = "", string EditorPreference = "", bool CloseToTray = false, bool CheckUpdatesOnStartup = true, bool CheckUpdatesDaily = true);
+public sealed record UserSettings(bool StartupVideo = true, bool ShutdownVideo = true, double StartupVolume = .8, double ShutdownVolume = 1, int AutoLockMinutes = 10, int RecordingRetentionDays = 0, bool RequireAppAuthentication = false, bool AssistantApiEnabled = false, bool AppMusicEnabled = true, double AppMusicVolume = .35, string ExternalEditor = "", string EditorPreference = "", bool CloseToTray = false, bool CheckUpdatesOnStartup = true, bool CheckUpdatesDaily = true, string Language = "it", bool MeteredConnection = false, bool ResourceSaving = false, bool SyncLanguage = false, bool SyncMusic = false, string[]? HomeCards = null);
 public sealed class AppData
 {
+    public PortablePreferences PortablePreferences {get;set;}=new();
+    public List<IntegrityObservation> IntegrityObservations {get;set;}=[];
     public Dictionary<string, FileLocation> FileLocations { get; set; } = [];
     public List<CertificateProvider> CertificateProviders { get; set; } = [];
     public List<MachineAddress> Machines { get; set; } = [];
     public List<string> Folders { get; set; } = ["Connessioni"];
     public List<ConnectionProfile> Profiles { get; set; } = [];
+    public List<ConnectionSearchView> ConnectionViews {get;set;}=[];
+    public List<ConnectionTemplate> ConnectionTemplates {get;set;} = [];
     public List<Snippet> Snippets { get; set; } = [];
     public List<Workspace> Workspaces { get; set; } = [];
     public UserSettings Settings { get; set; } = new();
@@ -129,19 +135,21 @@ public sealed class AppData
 
 public sealed class ProfileStore(string directory)
 {
-    public string DirectoryPath { get; } = directory;
+    public string DirectoryPath { get; } = LocalDataFiles.Root(directory);
     public static JsonSerializerOptions Json { get; } = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, PropertyNameCaseInsensitive = true };
     public AppData Load()
     {
-        var path = Path.Combine(DirectoryPath, "profiles.json");
-        return File.Exists(path) ? JsonSerializer.Deserialize<AppData>(File.ReadAllText(path), Json) ?? throw new InvalidDataException("Archivio profili non valido.") : new();
+        var path=LocalDataFiles.Child(DirectoryPath,"profiles.json");
+        return File.Exists(path)?ReadConfiguration(path):new();
     }
-    public void Save(AppData data) => AtomicFile.Write(Path.Combine(DirectoryPath, "profiles.json"), JsonSerializer.SerializeToUtf8Bytes(data, Json));
+    const int MaximumConfigurationBytes=32*1024*1024;
+    static AppData ReadConfiguration(string path){if(!Path.IsPathFullyQualified(path))throw new IOException("Seleziona un file di configurazione con percorso completo.");var bytes=LocalDataFiles.Read(Path.GetDirectoryName(path)!,Path.GetFileName(path),MaximumConfigurationBytes);try{var data=JsonSerializer.Deserialize<AppData>(bytes,Json)??throw new InvalidDataException("Formato configurazione non valido.");if(data.ConnectionTemplates==null||data.ConnectionTemplates.Count>50||data.ConnectionTemplates.Select(value=>value.Id).Distinct(StringComparer.Ordinal).Count()!=data.ConnectionTemplates.Count)throw new InvalidDataException("Elenco modelli non valido.");foreach(var template in data.ConnectionTemplates)template.Validate();ConnectionSearchView.Validate(data.ConnectionViews);if(data.PortablePreferences is null)throw new InvalidDataException("Preferenze sincronizzate non valide.");data.PortablePreferences.Validate();data.IntegrityObservations??=[];if(data.IntegrityObservations.Count>1000||data.IntegrityObservations.Any(value=>value is null))throw new InvalidDataException("Riepiloghi di verifica non validi.");return data;}finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);}}
+    public void Save(AppData data){var bytes=JsonSerializer.SerializeToUtf8Bytes(data,Json);try{if(bytes.Length>MaximumConfigurationBytes)throw new InvalidDataException("La configurazione supera 32 MiB.");LocalDataFiles.Write(DirectoryPath,"profiles.json",bytes);}finally{System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);}}
     public void Import(string path, AppData data)
     {
-        var imported = JsonSerializer.Deserialize<AppData>(File.ReadAllText(path), Json) ?? throw new InvalidDataException("Formato non valido.");
+        var imported=ReadConfiguration(path);
         foreach (var profile in imported.Profiles) profile.Validate();
-        var merged = new AppData { CertificateProviders = [.. data.CertificateProviders], FileLocations = new(data.FileLocations), Machines = [.. data.Machines], Profiles = [.. data.Profiles, .. imported.Profiles.Select(p => p with { Id = Guid.NewGuid().ToString("N"), PasswordId = "", Subsystem="", StartupCommands="", StartupMacro=null, Native=p.Native with { Executable="", ConfigFile="", IdentityFile="", ArgumentsJson="[]" }, Hooks=p.Hooks.Select(h=>h with {Enabled=false}).ToList() })], Folders = [.. data.Folders], Snippets = data.Snippets, Workspaces = data.Workspaces, Settings = data.Settings };
+        var merged = new AppData { IntegrityObservations=[..data.IntegrityObservations], PortablePreferences=data.PortablePreferences, ConnectionViews=[..data.ConnectionViews], ConnectionTemplates = [.. data.ConnectionTemplates], CertificateProviders = [.. data.CertificateProviders], FileLocations = new(data.FileLocations), Machines = [.. data.Machines], Profiles = [.. data.Profiles, .. imported.Profiles.Select(p => p with { Id = Guid.NewGuid().ToString("N"), PasswordId = "", Subsystem="", StartupCommands="", StartupMacro=null, Native=p.Native with { Executable="", ConfigFile="", IdentityFile="", ArgumentsJson="[]" }, Hooks=p.Hooks.Select(h=>h with {Enabled=false}).ToList() })], Folders = [.. data.Folders], Snippets = data.Snippets, Workspaces = data.Workspaces, Settings = data.Settings };
         foreach (var folder in imported.Folders.Concat(imported.Profiles.Select(p => p.Folder))) FolderCatalog.Add(merged, folder);
         Save(merged);
         data.Profiles = merged.Profiles;

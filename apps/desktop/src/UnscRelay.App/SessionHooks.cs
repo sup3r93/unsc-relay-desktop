@@ -15,27 +15,27 @@ public partial class MainWindow
     }
     async Task RunHooks(ConnectionProfile profile,string phase,SshSession? session=null,bool required=false)
     {
-        if(CriticalUpdateRequired)return;
+        var generation=authenticationGeneration;if(OperationsLocked)return;
         foreach(var hook in profile.Hooks.Where(h=>h.Enabled&&h.Phase==phase))
         {
-            if(CriticalUpdateRequired)return;
+            if(OperationsLocked||generation!=authenticationGeneration)return;
             Emit("notice",new{text="Hook "+phase+" / "+profile.Name+" in esecuzione..."});
-            try{if(hook.Kind=="local")await ConnectionHooks.RunLocal(hook);else if(session!=null)await session.RunRemoteHook(hook);}
+            try{if(hook.Kind=="local")await ConnectionHooks.RunLocal(hook,accountOperationStop.Token);else if(session!=null)await session.RunRemoteHook(hook,accountOperationStop.Token);}
             catch(Exception ex){if(required)throw;Emit("notice",new{text="Hook "+phase+" / "+profile.Name+": "+ex.Message});}
         }
     }
     async Task DisconnectWithHooks(string id,bool runHooks=true)
     {
-        hookedSessions.TryRemove(id,out var profile);
+        CancelSessionKeyInstallations(id);var generation=authenticationGeneration;hookedSessions.TryRemove(id,out var profile);
         sessions.TryGetValue(id,out var session);
         if(runHooks&&profile!=null&&session?.Connected==true)await RunHooks(profile,"before-disconnect",session);
         brokenSessions.Remove(id); sessionRouteSnapshots.Remove(id);
         StopRecordingSession(id);
         if(sessions.Remove(id,out var ended))await Task.Run(ended.Dispose);
-        if(runHooks&&profile!=null)await RunHooks(profile,"after-disconnect");
+        if(runHooks&&profile!=null&&generation==authenticationGeneration&&!OperationsLocked)await RunHooks(profile,"after-disconnect");
     }
     void SessionEnded(string id)
     {
-        Dispatcher.BeginInvoke(async()=>{if(CriticalUpdateRequired||closing||updating||!hookedSessions.TryRemove(id,out var profile))return;if(!(brokenSessions.Contains(id)&&automaticRecoveryProfiles.Contains(profile.Id)))await RunHooks(profile,"after-disconnect");});
+        var generation=authenticationGeneration;Dispatcher.BeginInvoke(async()=>{if(generation!=authenticationGeneration)return;CancelSessionKeyInstallations(id);if(OperationsLocked||closing||updating||!hookedSessions.TryRemove(id,out var profile))return;if(!(brokenSessions.Contains(id)&&automaticRecoveryProfiles.Contains(profile.Id)))await RunHooks(profile,"after-disconnect");});
     }
 }

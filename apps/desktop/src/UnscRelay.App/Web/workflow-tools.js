@@ -1,36 +1,164 @@
- 'use strict';
-function multiSendDialog(){
- const body=showModal('Invio a piu terminali','WORKFLOW / DESTINATARI ESPLICITI',null,true);modal.classList.add('workflow-modal');
- notice(body,'Seleziona i terminali SSH gia connessi. Ogni invio richiede conferma con nomi e indirizzi; non viene attivata una trasmissione continua della tastiera.');
- const form=document.createElement('form'),targets=[...panes.values()].filter(p=>p.connected&&!p.editor&&!p.fileWorkspace&&(p.profile.protocol==='ssh'||p.profile.protocol==='native'&&p.profile.native?.kind==='ssh')&&p.term);
- const choices=document.createElement('div');choices.className='workflow-targets';form.append(choices);
- for(const p of targets){const label=document.createElement('label');label.className='check-label';const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.name='recipient';checkbox.value=p.id;label.append(checkbox,document.createTextNode(p.title.textContent+' / '+p.profile.username+'@'+p.profile.host+':'+p.profile.port+(p.profile.environment==='produzione'?' / PRODUZIONE':'')));choices.append(label)}
- if(!targets.length)notice(form,'Non ci sono terminali SSH connessi.');
- const input=field(form,'Testo da inviare','multiText','','textarea');input.maxLength=32768;input.required=true;input.rows=6;
- const enterLabel=document.createElement('label');enterLabel.className='check-label';const enter=document.createElement('input');enter.type='checkbox';enterLabel.append(enter,document.createTextNode('Aggiungi Invio finale (esegue il comando)'));form.append(enterLabel);
- notice(form,'Anche senza Invio finale, un testo su piu righe puo eseguire comandi. Lâ€™esito indica lâ€™invio al terminale, non il successo del comando sul server.');
- const status=document.createElement('div');status.setAttribute('role','status');form.append(status);
- const send=document.createElement('button');send.className='primary';send.textContent='Rivedi destinatari e invia';send.disabled=!targets.length;form.append(send);
- form.onsubmit=async e=>{e.preventDefault();const ids=[...choices.querySelectorAll('input:checked')].map(i=>i.value);if(!ids.length)return toast('Seleziona almeno un terminale.',true);send.disabled=true;try{const result=await call('multiSend',{sessionIds:ids,text:input.value,enter:enter.checked});status.replaceChildren();for(const r of result){const line=document.createElement('p');line.textContent=(targets.find(p=>p.id===r.id)?.title.textContent||r.id)+': '+(r.sent?'testo inviato':r.error);status.append(line)}input.value='';enter.checked=false;for(const c of choices.querySelectorAll('input'))c.checked=false;}catch{}finally{send.disabled=false}};
- body.append(form);
+"use strict";
+function multiSendDialog() {
+  const body = showModal(uiText("Invio a piu terminali"), "WORKFLOW / DESTINATARI ESPLICITI", null, true);
+  modal.classList.add("workflow-modal");
+  notice(body, uiText("Seleziona i terminali SSH gia connessi. Ogni invio richiede conferma con nomi e indirizzi; non viene attivata una trasmissione continua della tastiera."));
+  const form = document.createElement("form"), targets = [...panes.values()].filter((p) => p.connected && !p.editor && !p.fileWorkspace && (p.profile.protocol === "ssh" || p.profile.protocol === "native" && p.profile.native?.kind === "ssh") && p.term);
+  const choices = document.createElement("div");
+  choices.className = "workflow-targets";
+  form.append(choices);
+  for (const p of targets) {
+    const label = document.createElement("label");
+    label.className = "check-label";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "recipient";
+    checkbox.value = p.id;
+    label.append(checkbox, document.createTextNode(p.title.textContent + " / " + p.profile.username + "@" + p.profile.host + ":" + p.profile.port + (p.profile.environment === "produzione" ? " / PRODUZIONE" : "")));
+    choices.append(label);
+  }
+  if (!targets.length) notice(form, uiText("Non ci sono terminali SSH connessi."));
+  const input = field(form, uiText("Testo da inviare"), "multiText", "", "textarea");
+  input.maxLength = 32768;
+  input.required = true;
+  input.rows = 6;
+  const enterLabel = document.createElement("label");
+  enterLabel.className = "check-label";
+  const enter = document.createElement("input");
+  enter.type = "checkbox";
+  enterLabel.append(enter, document.createTextNode("Aggiungi Invio finale (esegue il comando)"));
+  form.append(enterLabel);
+  notice(form, uiText("Anche senza Invio finale, un testo su piu righe puo eseguire comandi. L’esito indica l’invio al terminale, non il successo del comando sul server."));
+  const status = document.createElement("div");
+  status.setAttribute("role", "status");
+  form.append(status);
+  const send = document.createElement("button");
+  send.className = "primary";
+  send.textContent = uiText("Rivedi destinatari e invia");
+  send.disabled = !targets.length;
+  form.append(send);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const ids = [...choices.querySelectorAll("input:checked")].map((i) => i.value);
+    if (!ids.length) return toast(uiText("Seleziona almeno un terminale."), true);
+    send.disabled = true;
+    try {
+      const result = await call("multiSend", { sessionIds: ids, text: input.value, enter: enter.checked });
+      status.replaceChildren();
+      for (const r of result) {
+        const line = document.createElement("p");
+        line.textContent = (targets.find((p) => p.id === r.id)?.title.textContent || r.id) + ": " + (r.sent ? "testo inviato" : r.error);
+        status.append(line);
+      }
+      input.value = "";
+      enter.checked = false;
+      for (const c of choices.querySelectorAll("input")) c.checked = false;
+    } catch {
+    } finally {
+      send.disabled = false;
+    }
+  };
+  body.append(form);
 }
-function sshConfigDialog(){
- const body=showModal('Profili OpenSSH','IMPORTAZIONE / ESPORTAZIONE',null,true);modal.classList.add('workflow-modal');
- notice(body,'Importa endpoint da un file config scelto da te. Il file originale resta invariato. Nessuna chiave privata viene letta; dopo lâ€™importazione scegli Password, Chiave o Agent nel profilo.');
- notice(body,'Anteprima di HostName, User, Port, ConnectTimeout, ServerAliveInterval e tunnel TCP LocalForward/RemoteForward/DynamicForward (solo bind 127.0.0.1). ProxyJump accetta un alias Host e importa anche la sua catena. I tunnel importati restano spenti. Include e Match sospendono lâ€™importazione; direttive avanzate non rappresentabili escludono il profilo interessato.');
- const previewBox=document.createElement('section');previewBox.className='ssh-config-preview';
- body.append(button('Seleziona file config',async()=>{const preview=await call('sshConfigPreview');previewBox.replaceChildren();if(!preview)return;for(const warning of preview.warnings)notice(previewBox,warning);const list=document.createElement('div');list.className='workflow-targets';previewBox.append(list);for(const c of preview.candidates){const row=document.createElement('div');row.className='ssh-config-candidate';const label=document.createElement('label');label.className='check-label';const check=document.createElement('input');check.type='checkbox';check.value=c.alias;check.disabled=!c.profile;label.append(check,document.createTextNode(c.alias+(c.profile?' / '+c.profile.username+'@'+c.profile.host+':'+c.profile.port:' / non importabile')));row.append(label);for(const w of c.warnings)notice(row,w);list.append(row)}previewBox.append(button('Importa alias selezionati',async()=>{const aliases=[...list.querySelectorAll('input:checked')].map(c=>c.value);if(!aliases.length)return toast('Seleziona almeno un alias importabile.',true);update(await call('sshConfigImport',{aliases}));modal.close();toast('Profili aggiunti nella cartella OpenSSH. Configura lâ€™autenticazione prima di collegarti.')}));}));body.append(previewBox);
- body.append(button('Config avanzato / OpenSSH nativo',()=>nativeProfileDialog(null,{kind:'ssh'})));notice(body,'Per Include, Match e ProxyCommand usa OpenSSH nativo: il file viene letto dal client originale, senza conversione delle direttive. SFTP nativo usa una console dedicata; il browser SFTP integrato resta disponibile per i profili Relay.');
- const heading=document.createElement('h3');heading.textContent='Esporta endpoint';body.append(heading);notice(body,'Crea un file separato con i soli endpoint selezionati. Password, chiavi, agent e opzioni avanzate non sono esportati. Non sovrascrive il file config selezionato o ~/.ssh/config.');
- const exportList=document.createElement('div');exportList.className='workflow-targets';body.append(exportList);for(const p of state.data.profiles.filter(p=>['ssh','sftp'].includes(p.protocol))){const label=document.createElement('label');label.className='check-label';const c=document.createElement('input');c.type='checkbox';c.value=p.id;label.append(c,document.createTextNode(p.name+' / '+p.host+':'+p.port));exportList.append(label)}
- body.append(button('Esporta endpoint selezionati',async()=>{const profileIds=[...exportList.querySelectorAll('input:checked')].map(c=>c.value);if(!profileIds.length)return toast('Seleziona almeno un profilo.',true);await call('sshConfigExport',{profileIds});}));
-
- body.append(button('Anteprima scrittura nel config esistente',async()=>{const profileIds=[...exportList.querySelectorAll('input:checked')].map(c=>c.value);if(!profileIds.length)return toast('Seleziona almeno un profilo.',true);const plan=await call('sshConfigWritePreview',{profileIds});if(plan)sshConfigWriteDialog(plan)}));
+function sshConfigDialog() {
+  const body = showModal(uiText("Profili OpenSSH"), "IMPORTAZIONE / ESPORTAZIONE", null, true);
+  modal.classList.add("workflow-modal");
+  notice(body, uiText("Importa endpoint da un file config scelto da te. Il file originale resta invariato. Nessuna chiave privata viene letta; dopo l’importazione scegli Password, Chiave o Agent nel profilo."));
+  notice(body, uiText("Anteprima di HostName, User, Port, ConnectTimeout, ServerAliveInterval e tunnel TCP LocalForward/RemoteForward/DynamicForward (solo bind 127.0.0.1). ProxyJump accetta un alias Host e importa anche la sua catena. I tunnel importati restano spenti. Include e Match sospendono l’importazione; direttive avanzate non rappresentabili escludono il profilo interessato."));
+  const previewBox = document.createElement("section");
+  previewBox.className = "ssh-config-preview";
+  body.append(localizedButton("Seleziona file config", async () => {
+    const preview = await call("sshConfigPreview");
+    previewBox.replaceChildren();
+    if (!preview) return;
+    for (const warning of preview.warnings) notice(previewBox, warning);
+    const list = document.createElement("div");
+    list.className = "workflow-targets";
+    previewBox.append(list);
+    for (const c of preview.candidates) {
+      const row = document.createElement("div");
+      row.className = "ssh-config-candidate";
+      const label = document.createElement("label");
+      label.className = "check-label";
+      const check = document.createElement("input");
+      check.type = "checkbox";
+      check.value = c.alias;
+      check.disabled = !c.profile;
+      label.append(check, document.createTextNode(c.alias + (c.profile ? " / " + c.profile.username + "@" + c.profile.host + ":" + c.profile.port : " / non importabile")));
+      row.append(label);
+      for (const w of c.warnings) notice(row, w);
+      list.append(row);
+    }
+    previewBox.append(localizedButton("Importa alias selezionati", async () => {
+      const aliases = [...list.querySelectorAll("input:checked")].map((c) => c.value);
+      if (!aliases.length) return toast(uiText("Seleziona almeno un alias importabile."), true);
+      update(await call("sshConfigImport", { aliases }));
+      modal.close();
+      toast(uiText("Profili aggiunti nella cartella OpenSSH. Configura l’autenticazione prima di collegarti."));
+    }));
+  }));
+  body.append(previewBox);
+  body.append(localizedButton("Config avanzato / OpenSSH nativo", () => nativeProfileDialog(null, { kind: "ssh" })));
+  notice(body, uiText("Per Include, Match e ProxyCommand usa OpenSSH nativo: il file viene letto dal client originale, senza conversione delle direttive. SFTP nativo usa una console dedicata; il browser SFTP integrato resta disponibile per i profili Relay."));
+  const heading = document.createElement("h3");
+  heading.textContent = uiText("Esporta endpoint");
+  body.append(heading);
+  notice(body, uiText("Crea un file separato con i soli endpoint selezionati. Password, chiavi, agent e opzioni avanzate non sono esportati. Non sovrascrive il file config selezionato o ~/.ssh/config."));
+  const exportList = document.createElement("div");
+  exportList.className = "workflow-targets";
+  body.append(exportList);
+  for (const p of state.data.profiles.filter((p2) => ["ssh", "sftp"].includes(p2.protocol))) {
+    const label = document.createElement("label");
+    label.className = "check-label";
+    const c = document.createElement("input");
+    c.type = "checkbox";
+    c.value = p.id;
+    label.append(c, document.createTextNode(p.name + " / " + p.host + ":" + p.port));
+    exportList.append(label);
+  }
+  body.append(localizedButton("Esporta endpoint selezionati", async () => {
+    const profileIds = [...exportList.querySelectorAll("input:checked")].map((c) => c.value);
+    if (!profileIds.length) return toast(uiText("Seleziona almeno un profilo."), true);
+    await call("sshConfigExport", { profileIds });
+  }));
+  body.append(localizedButton("Anteprima scrittura nel config esistente", async () => {
+    const profileIds = [...exportList.querySelectorAll("input:checked")].map((c) => c.value);
+    if (!profileIds.length) return toast(uiText("Seleziona almeno un profilo."), true);
+    const plan = await call("sshConfigWritePreview", { profileIds });
+    if (plan) sshConfigWriteDialog(plan);
+  }));
 }
-function sshConfigWriteDialog(plan){
- const body=showModal('Rivedi il config OpenSSH','ANTEPRIMA / SCRITTURA CONSERVATIVA',null,true);modal.classList.add('workflow-modal');notice(body,plan.path);notice(body,'Solo endpoint, senza credenziali. Il resto del file resta identico e viene conservato in una copia .relay-backup. Gli alias personali giÃ  esistenti, Include e Match impediscono questa modifica: usa un file separato. Anteprima valida cinque minuti.');
- const before=document.createElement('details');const label=document.createElement('summary');label.textContent='File prima della modifica';const original=document.createElement('pre');original.className='config-preview-text';original.textContent=plan.before||'(file nuovo)';before.append(label,original);body.append(before);
- const after=document.createElement('pre');after.className='config-preview-text';after.textContent=plan.after;after.setAttribute('aria-label','Config risultante');body.append(after);const apply=button('Conferma scrittura del config',async()=>{apply.disabled=true;try{const result=await call('sshConfigWriteApply',{id:plan.id});if(result?.saved){modal.close();toast(result.backup?'Config salvato Â· backup: '+result.backup:'Nuovo config salvato.')}}finally{apply.disabled=false}},'primary');body.append(button('Annulla',()=>modal.close()),apply);
+function sshConfigWriteDialog(plan) {
+  const body = showModal(uiText("Rivedi il config OpenSSH"), "ANTEPRIMA / SCRITTURA CONSERVATIVA", null, true);
+  modal.classList.add("workflow-modal");
+  notice(body, plan.path);
+  notice(body, uiText("Solo endpoint, senza credenziali. Il resto del file resta identico e viene conservato in una copia .relay-backup. Gli alias personali già esistenti, Include e Match impediscono questa modifica: usa un file separato. Anteprima valida cinque minuti."));
+  const before = document.createElement("details");
+  const label = document.createElement("summary");
+  label.textContent = uiText("File prima della modifica");
+  const original = document.createElement("pre");
+  original.className = "config-preview-text";
+  original.textContent = plan.before || "(file nuovo)";
+  before.append(label, original);
+  body.append(before);
+  const after = document.createElement("pre");
+  after.className = "config-preview-text";
+  after.textContent = plan.after;
+  interfaceAttribute(after, 'aria-label', "Config risultante");
+  body.append(after);
+  const apply = localizedButton("Conferma scrittura del config", async () => {
+    apply.disabled = true;
+    try {
+      const result = await call("sshConfigWriteApply", { id: plan.id });
+      if (result?.saved) {
+        modal.close();
+        toast(result.backup ? "Config salvato · backup: " + result.backup : "Nuovo config salvato.");
+      }
+    } finally {
+      apply.disabled = false;
+    }
+  }, "primary");
+  body.append(localizedButton("Annulla", () => modal.close()), apply);
 }
-$('multi-send-btn').onclick=multiSendDialog;
-$('ssh-config-btn').onclick=sshConfigDialog;
+$("multi-send-btn").onclick = multiSendDialog;
+$("ssh-config-btn").onclick = sshConfigDialog;
